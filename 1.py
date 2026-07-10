@@ -496,14 +496,12 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             
             # doNotCompress에 resources.arsc 추가
             if 'doNotCompress:' in yml_content:
-                # 이미 있으면 추가하지 않음
                 if 'resources.arsc' not in yml_content:
                     yml_content = yml_content.replace(
                         'doNotCompress:',
                         'doNotCompress:\n  - resources.arsc'
                     )
             else:
-                # 없으면 새로 추가
                 yml_content += '\ndoNotCompress:\n  - resources.arsc\n'
             
             with open(yml_path, 'w', encoding='utf-8') as f:
@@ -526,14 +524,35 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         unsigned_apk = repack_dir / "unsigned.apk"
         
-        # ★ --no-auto-rename 옵션 추가 (리소스 이름 변경 방지)
-        cmd = [
-            str(apktool_path), "b",
-            "--no-auto-rename",
-            "--no-debug",
-            str(decompile_dir),
-            "-o", str(unsigned_apk)
-        ]
+        # ★ apktool 버전 확인 후 옵션 결정
+        try:
+            stdout, _ = run_cmd(["apktool", "--version"], timeout=10)
+            apktool_version = stdout.strip()
+            print(f"[*] apktool 버전: {apktool_version}")
+            
+            if apktool_version >= "2.6.0":
+                cmd = [
+                    str(apktool_path), "b",
+                    "--no-auto-rename",
+                    "--no-debug",
+                    str(decompile_dir),
+                    "-o", str(unsigned_apk)
+                ]
+            else:
+                cmd = [
+                    str(apktool_path), "b",
+                    "--no-debug",
+                    str(decompile_dir),
+                    "-o", str(unsigned_apk)
+                ]
+        except:
+            # 버전 확인 실패 시 기본 옵션
+            cmd = [
+                str(apktool_path), "b",
+                "--no-debug",
+                str(decompile_dir),
+                "-o", str(unsigned_apk)
+            ]
         
         print(f"[CMD] {' '.join(cmd)}")
         print(f"[JVM] {env.get('_JAVA_OPTIONS', '')}")
@@ -549,13 +568,11 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         aligned_apk = repack_dir / "aligned.apk"
         zipalign_path = get_tool_path("zipalign")
         
-        # zipalign이 없으면 설치 시도
         if not zipalign_path:
             zipalign_path = _install_zipalign()
         
         if zipalign_path and zipalign_path.exists():
             print("[*] zipalign 실행 중...")
-            # ★ -f 옵션으로 강제 덮어쓰기
             cmd = [
                 str(zipalign_path), "-f", "-v", "-p", "4",
                 str(unsigned_apk), str(aligned_apk)
@@ -565,12 +582,10 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             if proc.returncode == 0 and aligned_apk.exists():
                 print("[+] zipalign 완료")
-                # unsigned 삭제 (aligned로 대체)
                 if unsigned_apk.exists():
                     unsigned_apk.unlink()
             else:
                 print(f"[WARN] zipalign 실패: {proc.stderr}")
-                # zipalign 실패 시 unsigned 사용
                 shutil.copy(unsigned_apk, aligned_apk)
         else:
             print("[!] zipalign 없음, unsigned 복사")
@@ -578,18 +593,16 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         job_status[job_id]["progress"] = 70
         
-        # 4. ★★★ 서명 (zipalign 이후) ★★★
+        # 4. 서명 (v1+v2+v3)
         signed_apk = repack_dir / "signed.apk"
         signed = False
         
-        # apksigner 시도
         apksigner = shutil.which("apksigner")
         if apksigner:
             try:
                 env = os.environ.copy()
                 env["_JAVA_OPTIONS"] = "-Xmx128m"
                 
-                # v1+v2+v3 서명 모두 활성화
                 cmd = [
                     apksigner, "sign",
                     "--debug-key",
@@ -607,7 +620,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 else:
                     print(f"[!] apksigner 서명 실패: {proc.stderr}")
                     
-                    # v1만 재시도
                     cmd = [
                         apksigner, "sign",
                         "--debug-key",
@@ -628,7 +640,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             except Exception as e:
                 print(f"[!] apksigner 서명 실패: {e}")
         
-        # jarsigner fallback
         if not signed:
             jarsigner = shutil.which("jarsigner")
             debug_keystore = TOOLS_DIR / "debug.keystore"
