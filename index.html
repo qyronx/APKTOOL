@@ -138,7 +138,7 @@
     <!-- 패키지명 변경 -->
     <div class="panel">
         <label><i class="fas fa-cube"></i> 새 패키지명</label>
-        <input type="text" id="newPackageInput" placeholder="예: com.your.new.app" value="com.example.newapp">
+        <input type="text" id="newPackageInput" placeholder="예: com.your.new.app">
         <div style="font-size:11px; color:#4e6b8a; margin-top:6px;">AndroidManifest + smali + res 전체 치환</div>
         <div class="flex">
             <button class="btn btn-primary" id="rebuildBtn"><i class="fas fa-sync-alt"></i> 리빌드 + 서명</button>
@@ -186,19 +186,27 @@
     function clearLog() { consoleLog.innerHTML = ''; }
 
     async function apiCall(endpoint, method = 'GET', body = null) {
-        const opts = { method, headers: { 'Accept': 'application/json' } };
+        const opts = { 
+            method, 
+            headers: { 'Accept': 'application/json' } 
+        };
         if (body && !(body instanceof FormData)) {
             opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
         } else if (body instanceof FormData) {
             opts.body = body;
         }
-        const res = await fetch(`${API_BASE}${endpoint}`, opts);
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(`HTTP ${res.status}: ${errText}`);
+        try {
+            const res = await fetch(`${API_BASE}${endpoint}`, opts);
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`HTTP ${res.status}: ${errText}`);
+            }
+            return await res.json();
+        } catch (e) {
+            log(`API 호출 실패: ${e.message}`, 'err');
+            throw e;
         }
-        return await res.json();
     }
 
     async function uploadFile(file) {
@@ -213,7 +221,8 @@
             jobIdLabel.textContent = STATE.jobId;
             originalPackageLabel.textContent = STATE.originalPackage;
             log(`디컴파일 완료 · 원본 패키지명: ${STATE.originalPackage}`, 'ok');
-            newPackageInput.value = `com.${STATE.originalPackage.split('.').slice(-1)[0] || 'newapp'}.mod`;
+            // ★★★ 자동 변경 제거 - 사용자가 직접 입력하도록 ★★★
+            newPackageInput.placeholder = `예: com.${STATE.originalPackage.split('.').slice(-1)[0] || 'newapp'}.mod`;
         } catch (e) {
             log(`업로드 실패: ${e.message}`, 'err');
         }
@@ -258,6 +267,8 @@
         STATE.signedUrl = null;
         jobIdLabel.textContent = '없음';
         originalPackageLabel.textContent = '-';
+        newPackageInput.value = '';
+        newPackageInput.placeholder = '예: com.your.new.app';
         downloadLink.href = '#';
         downloadLink.style.opacity = '0.5';
         downloadLink.style.pointerEvents = 'none';
