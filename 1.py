@@ -171,6 +171,49 @@ def is_tool_installed(tool_name):
     return False
 
 # ========== 자동 의존성 설치 ==========
+def _install_zipalign():
+    """zipalign 설치 (없을 경우)"""
+    zipalign_path = TOOLS_DIR / "zipalign"
+    if zipalign_path.exists():
+        return zipalign_path
+    
+    system = platform.system().lower()
+    is_linux = system == 'linux'
+    is_windows = system == 'windows'
+    
+    try:
+        if is_linux:
+            urllib.request.urlretrieve(
+                "https://dl.google.com/android/repository/build-tools_r34-linux.zip",
+                TOOLS_DIR / "build-tools.zip"
+            )
+            with zipfile.ZipFile(TOOLS_DIR / "build-tools.zip", 'r') as zf:
+                zf.extractall(TOOLS_DIR)
+            (TOOLS_DIR / "build-tools.zip").unlink()
+            
+            for f in TOOLS_DIR.glob("**/zipalign"):
+                if f.is_file():
+                    shutil.move(str(f), str(zipalign_path))
+                    zipalign_path.chmod(0o755)
+                    return zipalign_path
+                    
+        elif is_windows:
+            urllib.request.urlretrieve(
+                "https://dl.google.com/android/repository/build-tools_r34-windows.zip",
+                TOOLS_DIR / "build-tools.zip"
+            )
+            with zipfile.ZipFile(TOOLS_DIR / "build-tools.zip", 'r') as zf:
+                zf.extractall(TOOLS_DIR)
+            (TOOLS_DIR / "build-tools.zip").unlink()
+            
+            for f in TOOLS_DIR.glob("**/zipalign.exe"):
+                if f.is_file():
+                    shutil.move(str(f), str(TOOLS_DIR / "zipalign.exe"))
+                    return TOOLS_DIR / "zipalign.exe"
+    except Exception as e:
+        print(f"[!] zipalign 설치 실패: {e}")
+    
+    return None
 def install_dependencies():
     print("[*] 의존성 설치 시작...")
     print(f"[*] 서버 디렉토리: {SERVER_DIR}")
@@ -436,7 +479,7 @@ def replace_in_all_files(decompile_dir, old_pkg, new_package):
 
 # ========== 백그라운드 리빌드 작업 ==========
 def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
-    """백그라운드에서 리빌드 실행 (zipalign 포함)"""
+    """백그라운드에서 리빌드 실행 (resources.arsc 압축 해제)"""
     try:
         job_status[job_id] = {"status": "processing", "progress": 10}
         
@@ -444,6 +487,28 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         job_status[job_id]["progress"] = 20
         replace_in_all_files(decompile_dir, old_pkg, new_package)
         job_status[job_id]["progress"] = 40
+        
+        # ★★★ 1.5. apktool.yml 수정 (resources.arsc 압축 방지) ★★★
+        yml_path = decompile_dir / "apktool.yml"
+        if yml_path.exists():
+            with open(yml_path, 'r', encoding='utf-8') as f:
+                yml_content = f.read()
+            
+            # doNotCompress에 resources.arsc 추가
+            if 'doNotCompress:' in yml_content:
+                # 이미 있으면 추가하지 않음
+                if 'resources.arsc' not in yml_content:
+                    yml_content = yml_content.replace(
+                        'doNotCompress:',
+                        'doNotCompress:\n  - resources.arsc'
+                    )
+            else:
+                # 없으면 새로 추가
+                yml_content += '\ndoNotCompress:\n  - resources.arsc\n'
+            
+            with open(yml_path, 'w', encoding='utf-8') as f:
+                f.write(yml_content)
+            print("[+] apktool.yml에 doNotCompress: resources.arsc 추가")
         
         # 2. apktool 리빌드
         repack_dir = decompile_dir.parent / "repacked"
@@ -460,7 +525,15 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             raise RuntimeError("apktool을 찾을 수 없음")
         
         unsigned_apk = repack_dir / "unsigned.apk"
-        cmd = [str(apktool_path), "b", str(decompile_dir), "-o", str(unsigned_apk)]
+        
+        # ★ --no-auto-rename 옵션 추가 (리소스 이름 변경 방지)
+        cmd = [
+            str(apktool_path), "b",
+            "--no-auto-rename",
+            "--no-debug",
+            str(decompile_dir),
+            "-o", str(unsigned_apk)
+        ]
         
         print(f"[CMD] {' '.join(cmd)}")
         print(f"[JVM] {env.get('_JAVA_OPTIONS', '')}")
@@ -472,25 +545,36 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print("[+] apktool 리빌드 완료")
         job_status[job_id]["progress"] = 60
         
-        # ★★★ 3. zipalign 실행 (Android 11+ 필수) ★★★
+        # ★★★ 3. zipalign 실행 (4바이트 정렬) ★★★
         aligned_apk = repack_dir / "aligned.apk"
         zipalign_path = get_tool_path("zipalign")
         
-        if zipalign_path:
+        # zipalign이 없으면 설치 시도
+        if not zipalign_path:
+            zipalign_path = _install_zipalign()
+        
+        if zipalign_path and zipalign_path.exists():
             print("[*] zipalign 실행 중...")
-            cmd = [str(zipalign_path), "-v", "-p", "4", str(unsigned_apk), str(aligned_apk)]
+            # ★ -f 옵션으로 강제 덮어쓰기
+            cmd = [
+                str(zipalign_path), "-f", "-v", "-p", "4",
+                str(unsigned_apk), str(aligned_apk)
+            ]
             print(f"[CMD] {' '.join(cmd)}")
             
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-            if proc.returncode != 0:
+            if proc.returncode == 0 and aligned_apk.exists():
+                print("[+] zipalign 완료")
+                # unsigned 삭제 (aligned로 대체)
+                if unsigned_apk.exists():
+                    unsigned_apk.unlink()
+            else:
                 print(f"[WARN] zipalign 실패: {proc.stderr}")
                 # zipalign 실패 시 unsigned 사용
-                aligned_apk = unsigned_apk
-            else:
-                print("[+] zipalign 완료")
+                shutil.copy(unsigned_apk, aligned_apk)
         else:
-            print("[!] zipalign 없음, unsigned 사용")
-            aligned_apk = unsigned_apk
+            print("[!] zipalign 없음, unsigned 복사")
+            shutil.copy(unsigned_apk, aligned_apk)
         
         job_status[job_id]["progress"] = 70
         
@@ -505,7 +589,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 env = os.environ.copy()
                 env["_JAVA_OPTIONS"] = "-Xmx128m"
                 
-                # v1+v2+v3 서명 모두 활성화 (Android 11+ 호환)
+                # v1+v2+v3 서명 모두 활성화
                 cmd = [
                     apksigner, "sign",
                     "--debug-key",
@@ -517,13 +601,13 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 ]
                 print(f"[CMD] {' '.join(cmd)}")
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
-                if proc.returncode == 0:
+                if proc.returncode == 0 and signed_apk.exists():
                     signed = True
                     print("[+] apksigner 서명 완료 (v1+v2+v3)")
                 else:
                     print(f"[!] apksigner 서명 실패: {proc.stderr}")
                     
-                    # v2/v3 없이 재시도 (Android 7 미만 호환)
+                    # v1만 재시도
                     cmd = [
                         apksigner, "sign",
                         "--debug-key",
@@ -535,7 +619,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                     ]
                     print(f"[CMD] {' '.join(cmd)}")
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
-                    if proc.returncode == 0:
+                    if proc.returncode == 0 and signed_apk.exists():
                         signed = True
                         print("[+] apksigner 서명 완료 (v1 only)")
                     else:
@@ -544,7 +628,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             except Exception as e:
                 print(f"[!] apksigner 서명 실패: {e}")
         
-        # jarsigner fallback (v1만 지원)
+        # jarsigner fallback
         if not signed:
             jarsigner = shutil.which("jarsigner")
             debug_keystore = TOOLS_DIR / "debug.keystore"
