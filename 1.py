@@ -607,7 +607,7 @@ def fix_resources_arsc_fast(apk_path):
 
 # ========== 백그라운드 리빌드 작업 ==========
 def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
-    """백그라운드에서 리빌드 실행 (resources.arsc 강제 변환 - zipalign 후에도 유지)"""
+    """백그라운드에서 리빌드 실행 (서명 후 resources.arsc 재변환)"""
     try:
         job_status[job_id] = {"status": "processing", "progress": 10}
         
@@ -652,7 +652,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print("[+] apktool 리빌드 완료")
         job_status[job_id]["progress"] = 55
         
-        # ★★★ 4. zipalign 실행 (먼저 정렬) ★★★
+        # ★★★ 4. zipalign 실행 ★★★
         aligned_apk = repack_dir / "aligned.apk"
         zipalign_path = get_tool_path("zipalign")
         
@@ -672,7 +672,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 print("[+] zipalign 완료")
                 if unsigned_apk.exists():
                     unsigned_apk.unlink()
-                # aligned_apk를 unsigned_apk로 사용
                 unsigned_apk = aligned_apk
             else:
                 print(f"[WARN] zipalign 실패: {proc.stderr}")
@@ -685,32 +684,24 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         job_status[job_id]["progress"] = 65
         
-        # ★★★ 5. zipalign 후 resources.arsc를 STORED로 강제 변환 (핵심!) ★★★
-        print("[*] resources.arsc를 STORED로 강제 변환 중 (zipalign 후)...")
+        # ★★★ 5. zipalign 후 resources.arsc STORED 변환 ★★★
+        print("[*] resources.arsc를 STORED로 변환 중 (zipalign 후)...")
+        fix_resources_arsc_force(unsigned_apk)
         
-        # 5-1. 강제 변환 실행
-        success = fix_resources_arsc_force(unsigned_apk)
-        if not success:
-            print("[!] resources.arsc 변환 실패, 한 번 더 시도...")
-            success = fix_resources_arsc_force(unsigned_apk)
-        
-        # 5-2. 변환 후 검증
+        # 검증
         try:
             with zipfile.ZipFile(unsigned_apk, 'r') as z:
                 info = z.getinfo("resources.arsc")
-                print(f"[*] 최종 resources.arsc compress_type: {info.compress_type}")
+                print(f"[*] resources.arsc compress_type: {info.compress_type}")
                 if info.compress_type != 0:
-                    print(f"[!] resources.arsc가 여전히 압축됨 (compress_type={info.compress_type})")
-                    # 한 번 더 강제 시도
+                    print("[!] resources.arsc가 압축됨, 강제 재변환...")
                     fix_resources_arsc_force(unsigned_apk)
-                else:
-                    print("[+] resources.arsc STORED 확인 완료")
         except Exception as e:
-            print(f"[!] resources.arsc 검증 실패: {e}")
+            print(f"[!] 검증 실패: {e}")
         
-        job_status[job_id]["progress"] = 80
+        job_status[job_id]["progress"] = 75
         
-        # 6. 서명 (v1+v2+v3)
+        # 6. 서명 (v2+v3만 사용 - v1 비활성화)
         signed_apk = repack_dir / "signed.apk"
         signed = False
         
@@ -720,10 +711,11 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 env = os.environ.copy()
                 env["_JAVA_OPTIONS"] = "-Xmx128m"
                 
+                # ★ v1 비활성화 (v2+v3만)
                 cmd = [
                     apksigner, "sign",
                     "--debug-key",
-                    "--v1-signing-enabled", "true",
+                    "--v1-signing-enabled", "false",
                     "--v2-signing-enabled", "true",
                     "--v3-signing-enabled", "true",
                     "--out", str(signed_apk),
@@ -733,14 +725,20 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
                 if proc.returncode == 0 and signed_apk.exists():
                     signed = True
-                    print("[+] apksigner 서명 완료 (v1+v2+v3)")
+                    print("[+] apksigner 서명 완료 (v2+v3)")
+                    
+                    # ★★★ 7. 서명 후 resources.arsc 재변환 ★★★
+                    print("[*] 서명 후 resources.arsc 재변환 중...")
+                    fix_resources_arsc_force(signed_apk)
+                    
                 else:
-                    print(f"[!] apksigner v1+v2+v3 서명 실패: {proc.stderr}")
+                    print(f"[!] apksigner v2+v3 서명 실패: {proc.stderr}")
+                    # v2만 시도
                     cmd = [
                         apksigner, "sign",
                         "--debug-key",
-                        "--v1-signing-enabled", "true",
-                        "--v2-signing-enabled", "false",
+                        "--v1-signing-enabled", "false",
+                        "--v2-signing-enabled", "true",
                         "--v3-signing-enabled", "false",
                         "--out", str(signed_apk),
                         str(unsigned_apk)
@@ -749,13 +747,15 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
                     if proc.returncode == 0 and signed_apk.exists():
                         signed = True
-                        print("[+] apksigner 서명 완료 (v1 only)")
+                        print("[+] apksigner 서명 완료 (v2)")
+                        fix_resources_arsc_force(signed_apk)
                     else:
-                        print(f"[!] apksigner v1 서명도 실패: {proc.stderr}")
+                        print(f"[!] apksigner v2 서명도 실패: {proc.stderr}")
                         
             except Exception as e:
                 print(f"[!] apksigner 서명 실패: {e}")
         
+        # jarsigner fallback (v1만 지원 - 권장하지 않음)
         if not signed:
             jarsigner = shutil.which("jarsigner")
             debug_keystore = TOOLS_DIR / "debug.keystore"
@@ -778,6 +778,8 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                         shutil.copy(unsigned_apk, signed_apk)
                         signed = True
                         print("[+] jarsigner 서명 완료 (v1 only)")
+                        # jarsigner도 재변환 필요
+                        fix_resources_arsc_force(signed_apk)
                     else:
                         print(f"[!] jarsigner 서명 실패: {proc.stderr}")
                 except Exception as e:
@@ -787,7 +789,20 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             print("[!] 서명 도구 없음. 서명되지 않은 APK 생성")
             shutil.copy(unsigned_apk, signed_apk)
         
-        # 7. 다운로드 준비
+        # ★★★ 8. 최종 검증 ★★★
+        try:
+            with zipfile.ZipFile(signed_apk, 'r') as z:
+                info = z.getinfo("resources.arsc")
+                print(f"[*] 최종 resources.arsc compress_type: {info.compress_type}")
+                if info.compress_type == 0:
+                    print("[+] 최종 resources.arsc STORED 확인 완료!")
+                else:
+                    print(f"[!] 최종 resources.arsc가 압축됨 (compress_type={info.compress_type})")
+                    fix_resources_arsc_force(signed_apk)
+        except Exception as e:
+            print(f"[!] 최종 검증 실패: {e}")
+        
+        # 9. 다운로드 준비
         download_dir = BASE_DIR / "downloads"
         download_dir.mkdir(exist_ok=True)
         final_apk = download_dir / f"{job_id}_signed.apk"
