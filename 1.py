@@ -480,13 +480,15 @@ def update_apktool_yml(decompile_dir, old_pkg, new_package):
     print("[+] apktool.yml 업데이트 완료")
 def fix_resources_arsc_force(apk_path):
     """
-    resources.arsc를 강제로 STORED로 변환 (압축 해제)
-    전체 파일을 다시 쓰지 않고 resources.arsc만 교체
+    resources.arsc를 강제로 STORED로 변환 (subprocess + zip 명령어 사용)
     """
     if not apk_path.exists():
         return False
     
     try:
+        import tempfile
+        import subprocess
+        
         # 1. 현재 상태 확인
         with zipfile.ZipFile(apk_path, 'r') as zf:
             info = zf.getinfo("resources.arsc")
@@ -496,71 +498,53 @@ def fix_resources_arsc_force(apk_path):
             if current_type == 0:
                 print("[*] 이미 STORED 상태, 변환 생략")
                 return True
-            
-            arsc_data = zf.read("resources.arsc")
         
-        # 2. 임시 파일 생성 (압축 방식 STORED 강제)
-        temp_path = apk_path.with_suffix(".fixed.apk")
+        # 2. 임시 디렉토리 생성
+        temp_dir = Path(tempfile.mkdtemp())
+        temp_apk = temp_dir / "fixed.apk"
+        temp_arsc = temp_dir / "resources.arsc"
         
+        # 3. resources.arsc 추출
+        with zipfile.ZipFile(apk_path, 'r') as zf:
+            with open(temp_arsc, 'wb') as f:
+                f.write(zf.read("resources.arsc"))
+        
+        # 4. 새 APK 생성 (zip 명령어로 -0 옵션 사용 = STORED)
+        # zip -0 (저장, 압축 없음)
+        cmd = [
+            "zip", "-0", str(temp_apk), str(temp_arsc)
+        ]
+        print(f"[CMD] {' '.join(cmd)}")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        
+        if proc.returncode != 0:
+            raise RuntimeError(f"zip 명령 실패: {proc.stderr}")
+        
+        # 5. 원본 APK의 다른 파일들 추가 (압축 유지)
         with zipfile.ZipFile(apk_path, 'r') as zin:
-            with zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_STORED) as zout:
+            with zipfile.ZipFile(temp_apk, 'a') as zout:  # append 모드
                 for item in zin.infolist():
-                    data = zin.read(item.filename)
-                    
-                    if item.filename == "resources.arsc":
-                        # STORED로 다시 쓰기
-                        info = zipfile.ZipInfo(item.filename)
-                        info.date_time = item.date_time
-                        info.compress_type = zipfile.ZIP_STORED
-                        info.external_attr = item.external_attr
-                        info.create_system = item.create_system
-                        zout.writestr(info, data)
-                        print(f"[+] resources.arsc를 STORED로 변환 (compress_type: 0)")
-                    else:
-                        # 다른 파일은 그대로 복사 (ZIP_STORED 유지)
+                    if item.filename != "resources.arsc":
+                        data = zin.read(item.filename)
                         zout.writestr(item, data)
         
-        # 3. 원본 교체
-        shutil.move(temp_path, apk_path)
+        # 6. 원본 교체
+        shutil.move(temp_apk, apk_path)
+        shutil.rmtree(temp_dir)
         
-        # 4. 변환 후 검증 (최대 3회 재시도)
-        for attempt in range(3):
-            with zipfile.ZipFile(apk_path, 'r') as zf:
-                info = zf.getinfo("resources.arsc")
-                print(f"[*] 변환 후 resources.arsc compress_type: {info.compress_type}")
-                if info.compress_type == 0:
-                    print("[+] resources.arsc STORED 확인 완료")
-                    return True
-                else:
-                    print(f"[!] resources.arsc가 여전히 압축됨 (compress_type={info.compress_type}), 재시도 {attempt+1}/3")
-                    # 강제 재변환
-                    with zipfile.ZipFile(apk_path, 'r') as zf2:
-                        arsc_data2 = zf2.read("resources.arsc")
-                    temp_path2 = apk_path.with_suffix(".fixed2.apk")
-                    with zipfile.ZipFile(apk_path, 'r') as zin2:
-                        with zipfile.ZipFile(temp_path2, 'w', compression=zipfile.ZIP_STORED) as zout2:
-                            for item in zin2.infolist():
-                                data2 = zin2.read(item.filename)
-                                if item.filename == "resources.arsc":
-                                    info2 = zipfile.ZipInfo(item.filename)
-                                    info2.date_time = item.date_time
-                                    info2.compress_type = zipfile.ZIP_STORED
-                                    info2.external_attr = item.external_attr
-                                    info2.create_system = item.create_system
-                                    zout2.writestr(info2, arsc_data2)
-                                else:
-                                    zout2.writestr(item, data2)
-                    shutil.move(temp_path2, apk_path)
-        
-        # 최종 확인
+        # 7. 검증
         with zipfile.ZipFile(apk_path, 'r') as zf:
             info = zf.getinfo("resources.arsc")
-            return info.compress_type == 0
+            print(f"[*] 변환 후 resources.arsc compress_type: {info.compress_type}")
+            if info.compress_type == 0:
+                print("[+] resources.arsc STORED 확인 완료!")
+                return True
+            else:
+                print(f"[!] resources.arsc가 여전히 압축됨 (compress_type={info.compress_type})")
+                return False
         
     except Exception as e:
-        print(f"[!] resources.arsc 강제 변환 실패: {e}")
-        if temp_path.exists():
-            temp_path.unlink()
+        print(f"[!] resources.arsc 변환 실패: {e}")
         return False
 def fix_resources_arsc_fast(apk_path):
     """
