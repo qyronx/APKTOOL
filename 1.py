@@ -1,4 +1,4 @@
-# server.py - APKWorkshop NullByte (패키지명 변경 전용)
+# server.py - APKWorkshop NullByte (패키지명 변경 전용 - keytool 없음 해결)
 # 실행: python server.py (포트 10000)
 
 import os
@@ -10,6 +10,7 @@ import json
 import uuid
 import zipfile
 import urllib.request
+import tarfile
 import re
 import stat
 from pathlib import Path
@@ -80,6 +81,32 @@ def install_java_linux():
         print(f"[!] Java 설치 실패: {e}")
     return False
 
+def install_java_windows():
+    print("[*] Windows용 Java 다운로드 중...")
+    java_dir = TOOLS_DIR / "java"
+    java_dir.mkdir(exist_ok=True)
+    
+    java_zip = TOOLS_DIR / "openjdk.zip"
+    try:
+        url = "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9%2B9/OpenJDK17U-jdk_x64_windows_hotspot_17.0.9_9.zip"
+        urllib.request.urlretrieve(url, java_zip)
+        
+        with zipfile.ZipFile(java_zip, 'r') as zf:
+            zf.extractall(java_dir)
+        java_zip.unlink()
+        
+        jdk_dirs = [d for d in java_dir.iterdir() if d.is_dir() and d.name.startswith("jdk")]
+        if jdk_dirs:
+            jdk_home = jdk_dirs[0]
+            os.environ["JAVA_HOME"] = str(jdk_home)
+            bin_path = jdk_home / "bin"
+            os.environ["PATH"] = str(bin_path) + os.pathsep + os.environ.get("PATH", "")
+            print(f"[+] Java 설치 완료: {jdk_home}")
+            return True
+    except Exception as e:
+        print(f"[!] Java 설치 실패: {e}")
+    return False
+
 def ensure_java():
     if is_java_installed():
         ver = get_java_version()
@@ -90,7 +117,16 @@ def ensure_java():
             print(f"[!] Java 버전이 낮음 (11+ 필요)")
     
     print("[*] Java 자동 설치 시도...")
-    success = install_java_linux()
+    
+    system = platform.system().lower()
+    success = False
+    
+    if system == 'linux':
+        success = install_java_linux()
+    elif system == 'windows':
+        success = install_java_windows()
+    else:
+        print(f"[!] 지원하지 않는 OS: {system}")
     
     if success:
         java_home = os.environ.get("JAVA_HOME")
@@ -139,6 +175,7 @@ def install_dependencies():
     
     system = platform.system().lower()
     is_linux = system == 'linux'
+    is_windows = system == 'windows'
 
     # apktool 설치
     if not is_tool_installed("apktool"):
@@ -154,19 +191,30 @@ def install_dependencies():
                     "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
                     TOOLS_DIR / "apktool.jar"
                 )
+            elif is_windows:
+                urllib.request.urlretrieve(
+                    "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat",
+                    TOOLS_DIR / "apktool.bat"
+                )
+                urllib.request.urlretrieve(
+                    "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
+                    TOOLS_DIR / "apktool.jar"
+                )
             print("[+] apktool 설치 완료")
         except Exception as e:
             print(f"[!] apktool 설치 실패: {e}")
     else:
         print("[*] apktool 이미 설치됨")
     
-    # 디버그 키스토어 생성
+    # ★★★ 디버그 키스토어 생성 (keytool 없이 apksigner 사용) ★★★
     debug_keystore = TOOLS_DIR / "debug.keystore"
     if not debug_keystore.exists():
         print("[*] 디버그 키스토어 생성 중...")
-        try:
-            keytool_path = shutil.which("keytool")
-            if keytool_path:
+        
+        # 방법 1: keytool 시도
+        keytool_path = shutil.which("keytool")
+        if keytool_path:
+            try:
                 subprocess.run([
                     keytool_path, "-genkey", "-v",
                     "-keystore", str(debug_keystore),
@@ -178,11 +226,87 @@ def install_dependencies():
                     "-keypass", "android",
                     "-dname", "CN=Android Debug, O=Android, C=US"
                 ], check=False, timeout=30)
-                print("[+] 디버그 키스토어 생성 완료")
-            else:
-                print("[!] keytool 없음")
-        except Exception as e:
-            print(f"[!] 키스토어 생성 실패: {e}")
+                if debug_keystore.exists():
+                    print("[+] 디버그 키스토어 생성 완료 (keytool)")
+            except Exception as e:
+                print(f"[!] keytool 실패: {e}")
+        
+        # 방법 2: keytool 실패 시 apksigner로 더미 키 생성
+        if not debug_keystore.exists():
+            apksigner = shutil.which("apksigner")
+            if apksigner:
+                try:
+                    # 더미 APK 생성 후 apksigner --debug-key로 서명하면 키스토어가 자동 생성됨
+                    dummy_apk = TOOLS_DIR / "dummy.apk"
+                    # 빈 더미 파일 생성 (실제 APK는 아니지만 서명 테스트용)
+                    with open(dummy_apk, 'wb') as f:
+                        f.write(b'PK\x03\x04')  # ZIP 헤더
+                    
+                    subprocess.run([
+                        apksigner, "sign",
+                        "--debug-key",
+                        "--out", str(TOOLS_DIR / "dummy_signed.apk"),
+                        str(dummy_apk)
+                    ], check=False, timeout=10)
+                    
+                    # apksigner가 생성한 키스토어 찾기 (보통 ~/.android/debug.keystore)
+                    home_keystore = Path.home() / ".android" / "debug.keystore"
+                    if home_keystore.exists():
+                        shutil.copy(home_keystore, debug_keystore)
+                        print(f"[+] 디버그 키스토어 복사 완료 (apksigner): {debug_keystore}")
+                    
+                    # 임시 파일 정리
+                    if dummy_apk.exists():
+                        dummy_apk.unlink()
+                    if (TOOLS_DIR / "dummy_signed.apk").exists():
+                        (TOOLS_DIR / "dummy_signed.apk").unlink()
+                        
+                except Exception as e:
+                    print(f"[!] apksigner 디버그 키 생성 실패: {e}")
+        
+        # 방법 3: 자체 생성 (최후의 수단)
+        if not debug_keystore.exists():
+            print("[!] keytool과 apksigner 모두 없음. 기본 디버그 키 생성 시도...")
+            try:
+                # openssl로 자체 서명 키 생성 (Linux)
+                if is_linux:
+                    openssl = shutil.which("openssl")
+                    if openssl:
+                        # PKCS12 키스토어 생성
+                        subprocess.run([
+                            openssl, "genrsa", "-out", str(TOOLS_DIR / "debug.key"), "2048"
+                        ], check=False)
+                        subprocess.run([
+                            openssl, "req", "-new", "-x509", "-key", str(TOOLS_DIR / "debug.key"),
+                            "-out", str(TOOLS_DIR / "debug.crt"),
+                            "-subj", "/CN=Android Debug/O=Android/C=US",
+                            "-days", "10000"
+                        ], check=False)
+                        # keytool로 PKCS12 변환 (keytool이 있으면)
+                        if keytool_path:
+                            subprocess.run([
+                                keytool_path, "-import", "-v",
+                                "-keystore", str(debug_keystore),
+                                "-storepass", "android",
+                                "-keypass", "android",
+                                "-alias", "androiddebugkey",
+                                "-file", str(TOOLS_DIR / "debug.crt"),
+                                "-noprompt"
+                            ], check=False)
+                            if debug_keystore.exists():
+                                print("[+] 디버그 키스토어 생성 완료 (openssl)")
+                        
+                        # 임시 파일 정리
+                        for f in [TOOLS_DIR / "debug.key", TOOLS_DIR / "debug.crt"]:
+                            if f.exists():
+                                f.unlink()
+            except Exception as e:
+                print(f"[!] openssl 키 생성 실패: {e}")
+        
+        if debug_keystore.exists():
+            print("[+] 디버그 키스토어 생성 완료")
+        else:
+            print("[!] 디버그 키스토어 생성 실패. 서명 없이 진행됩니다.")
     
     print("[+] 의존성 설치 완료")
 
@@ -200,7 +324,7 @@ def get_tool_path(tool_name):
 def run_cmd(cmd, cwd=None, timeout=300):
     actual_cmd = []
     for arg in cmd:
-        if arg in ["apktool"]:
+        if arg in ["apktool", "jarsigner", "apksigner"]:
             tool_path = get_tool_path(arg)
             if tool_path:
                 actual_cmd.append(str(tool_path))
@@ -249,20 +373,6 @@ def extract_package_name(manifest_path):
     except:
         pass
     return None
-
-def replace_in_file(file_path, old_str, new_str):
-    """파일 내 문자열 치환"""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        if old_str in content:
-            content = content.replace(old_str, new_str)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            return True
-    except:
-        pass
-    return False
 
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
@@ -406,39 +516,74 @@ def rebuild_apk(job_id):
     except Exception as e:
         return jsonify({"error": f"리빌드 실패: {str(e)}"}), 500
 
-    # 5. 서명 (디버그 키)
+    # 5. ★★★ 서명 (keytool 없이도 동작) ★★★
     signed_apk = repack_dir / "signed.apk"
-    debug_keystore = TOOLS_DIR / "debug.keystore"
-    try:
-        # jarsigner 사용 (더 안정적)
-        jarsigner = shutil.which("jarsigner")
-        if jarsigner and debug_keystore.exists():
+    unsigned_apk = repack_dir / "unsigned.apk"
+    
+    signed = False
+    
+    # 방법 1: apksigner (우선 - --debug-key로 자체 서명)
+    apksigner = shutil.which("apksigner")
+    if apksigner:
+        try:
+            print("[*] apksigner로 서명 시도...")
             run_cmd([
-                jarsigner, "-verbose", "-sigalg", "SHA1withRSA",
-                "-digestalg", "SHA1",
-                "-keystore", str(debug_keystore),
-                "-storepass", "android",
-                "-keypass", "android",
-                str(repack_dir / "unsigned.apk"), "androiddebugkey"
-            ])
-            shutil.copy(repack_dir / "unsigned.apk", signed_apk)
-        else:
-            # apksigner 시도
-            apksigner = shutil.which("apksigner")
-            if apksigner:
+                apksigner, "sign",
+                "--debug-key",  # ★ keytool 없이 자체 디버그 키 사용
+                "--out", str(signed_apk),
+                str(unsigned_apk)
+            ], timeout=60)
+            signed = True
+            print("[+] apksigner 서명 완료")
+        except Exception as e:
+            print(f"[!] apksigner 서명 실패: {e}")
+    
+    # 방법 2: jarsigner (apksigner 실패 시)
+    if not signed:
+        jarsigner = shutil.which("jarsigner")
+        debug_keystore = TOOLS_DIR / "debug.keystore"
+        
+        # 키스토어가 없으면 생성 시도
+        if not debug_keystore.exists():
+            keytool = shutil.which("keytool")
+            if keytool:
+                try:
+                    subprocess.run([
+                        keytool, "-genkey", "-v",
+                        "-keystore", str(debug_keystore),
+                        "-alias", "androiddebugkey",
+                        "-keyalg", "RSA",
+                        "-keysize", "2048",
+                        "-validity", "10000",
+                        "-storepass", "android",
+                        "-keypass", "android",
+                        "-dname", "CN=Android Debug, O=Android, C=US"
+                    ], check=False, timeout=30)
+                except:
+                    pass
+        
+        if jarsigner and debug_keystore.exists():
+            try:
+                print("[*] jarsigner로 서명 시도...")
                 run_cmd([
-                    apksigner, "sign",
-                    "--debug-key",
-                    "--out", str(signed_apk),
-                    str(repack_dir / "unsigned.apk")
-                ])
-            else:
-                # 서명 없이 복사 (경고)
-                shutil.copy(repack_dir / "unsigned.apk", signed_apk)
-                print("[WARN] 서명 도구 없음. 서명되지 않은 APK 생성")
-    except Exception as e:
-        print(f"[WARN] 서명 실패: {e}")
-        shutil.copy(repack_dir / "unsigned.apk", signed_apk)
+                    jarsigner, "-verbose",
+                    "-sigalg", "SHA1withRSA",
+                    "-digestalg", "SHA1",
+                    "-keystore", str(debug_keystore),
+                    "-storepass", "android",
+                    "-keypass", "android",
+                    str(unsigned_apk), "androiddebugkey"
+                ], timeout=60)
+                shutil.copy(unsigned_apk, signed_apk)
+                signed = True
+                print("[+] jarsigner 서명 완료")
+            except Exception as e:
+                print(f"[!] jarsigner 서명 실패: {e}")
+    
+    # 방법 3: 서명 없이 (최후의 수단)
+    if not signed:
+        print("[!] 서명 도구 없음. 서명되지 않은 APK 생성 (설치 불가능)")
+        shutil.copy(unsigned_apk, signed_apk)
 
     # 6. 다운로드 준비
     download_dir = BASE_DIR / "downloads"
@@ -448,7 +593,8 @@ def rebuild_apk(job_id):
 
     return jsonify({
         "message": f"리빌드 완료: {old_pkg} → {new_package}",
-        "download_url": f"/api/download/{job_id}"
+        "download_url": f"/api/download/{job_id}",
+        "signed": signed
     })
 
 @app.route('/api/download/<job_id>', methods=['GET'])
