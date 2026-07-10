@@ -397,7 +397,7 @@ def replace_in_all_files(decompile_dir, old_pkg, new_package):
 
 # ========== 백그라운드 리빌드 작업 ==========
 def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
-    """백그라운드에서 리빌드 실행"""
+    """백그라운드에서 리빌드 실행 (512MB 최적화)"""
     try:
         job_status[job_id] = {"status": "processing", "progress": 10}
         
@@ -406,67 +406,99 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         replace_in_all_files(decompile_dir, old_pkg, new_package)
         job_status[job_id]["progress"] = 40
         
-        # 2. ★★★ apktool 버전 확인 후 -j 옵션 사용 ★★★
+        # 2. 리빌드 (★ 메모리 제한 + 싱글스레드)
         repack_dir = decompile_dir.parent / "repacked"
         repack_dir.mkdir(exist_ok=True)
         
         job_status[job_id]["progress"] = 50
         
-        # apktool 버전 확인
-        try:
-            stdout, _ = run_cmd(["apktool", "--version"], timeout=10)
-            apktool_version = stdout.strip()
-            print(f"[*] apktool 버전: {apktool_version}")
-            
-            # 버전이 2.6.0 이상이면 -j 사용
-            if apktool_version >= "2.6.0":
-                run_cmd(["apktool", "b", "-j", "4", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
-            else:
-                print("[*] apktool 버전이 2.6.0 미만, -j 옵션 없이 실행")
-                run_cmd(["apktool", "b", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
-        except Exception as e:
-            # 버전 확인 실패 시 -j 없이 실행
-            print(f"[*] apktool 버전 확인 실패: {e}, 기본 모드로 실행")
-            run_cmd(["apktool", "b", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
+        # ★ JVM 메모리 제한 (512MB 환경에 최적화)
+        env = os.environ.copy()
+        env["_JAVA_OPTIONS"] = "-Xmx256m -Xms64m -XX:+UseSerialGC"
         
+        # ★ apktool 경로 찾기
+        apktool_path = get_tool_path("apktool")
+        if not apktool_path:
+            raise RuntimeError("apktool을 찾을 수 없음")
+        
+        # ★ 싱글스레드로 실행 (-j 제거)
+        cmd = [
+            str(apktool_path),
+            "b",
+            str(decompile_dir),
+            "-o",
+            str(repack_dir / "unsigned.apk")
+        ]
+        
+        print(f"[CMD] {' '.join(cmd)}")
+        print(f"[JVM] {env.get('_JAVA_OPTIONS', '')}")
+        
+        proc = subprocess.run(
+            cmd,
+            cwd=None,
+            capture_output=True,
+            text=True,
+            timeout=7200,
+            env=env
+        )
+        
+        if proc.returncode != 0:
+            raise RuntimeError(f"리빌드 실패 (code {proc.returncode}): {proc.stderr}")
+        
+        print("[+] 리빌드 완료")
         job_status[job_id]["progress"] = 70
         
-        # 3. 서명
+        # 3. 서명 (이하 동일)
         unsigned_apk = repack_dir / "unsigned.apk"
         signed_apk = repack_dir / "signed.apk"
         signed = False
         
+        # apksigner 시도
         apksigner = shutil.which("apksigner")
         if apksigner:
             try:
-                run_cmd([
-                    apksigner, "sign",
-                    "--debug-key",
-                    "--out", str(signed_apk),
-                    str(unsigned_apk)
-                ], timeout=300)
-                signed = True
-                print("[+] apksigner 서명 완료")
+                env = os.environ.copy()
+                env["_JAVA_OPTIONS"] = "-Xmx128m"
+                proc = subprocess.run(
+                    [apksigner, "sign", "--debug-key", "--out", str(signed_apk), str(unsigned_apk)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    env=env
+                )
+                if proc.returncode == 0:
+                    signed = True
+                    print("[+] apksigner 서명 완료")
             except Exception as e:
                 print(f"[!] apksigner 서명 실패: {e}")
         
+        # jarsigner fallback
         if not signed:
             jarsigner = shutil.which("jarsigner")
             debug_keystore = TOOLS_DIR / "debug.keystore"
             if jarsigner and debug_keystore.exists():
                 try:
-                    run_cmd([
-                        jarsigner, "-verbose",
-                        "-sigalg", "SHA1withRSA",
-                        "-digestalg", "SHA1",
-                        "-keystore", str(debug_keystore),
-                        "-storepass", "android",
-                        "-keypass", "android",
-                        str(unsigned_apk), "androiddebugkey"
-                    ], timeout=300)
-                    shutil.copy(unsigned_apk, signed_apk)
-                    signed = True
-                    print("[+] jarsigner 서명 완료")
+                    env = os.environ.copy()
+                    env["_JAVA_OPTIONS"] = "-Xmx128m"
+                    proc = subprocess.run(
+                        [
+                            jarsigner, "-verbose",
+                            "-sigalg", "SHA1withRSA",
+                            "-digestalg", "SHA1",
+                            "-keystore", str(debug_keystore),
+                            "-storepass", "android",
+                            "-keypass", "android",
+                            str(unsigned_apk), "androiddebugkey"
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        env=env
+                    )
+                    if proc.returncode == 0:
+                        shutil.copy(unsigned_apk, signed_apk)
+                        signed = True
+                        print("[+] jarsigner 서명 완료")
                 except Exception as e:
                     print(f"[!] jarsigner 서명 실패: {e}")
         
@@ -495,7 +527,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print(f"[!] 리빌드 실패 {job_id}: {e}")
         import traceback
         traceback.print_exc()
-
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
 def upload_apk():
