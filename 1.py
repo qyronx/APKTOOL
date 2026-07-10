@@ -182,34 +182,38 @@ def install_dependencies():
     is_linux = system == 'linux'
     is_windows = system == 'windows'
 
-    # apktool 설치
-    if not is_tool_installed("apktool"):
-        print("[*] apktool 다운로드 중...")
-        try:
-            if is_linux:
-                urllib.request.urlretrieve(
-                    "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool",
-                    TOOLS_DIR / "apktool"
-                )
-                (TOOLS_DIR / "apktool").chmod(0o755)
-                urllib.request.urlretrieve(
-                    "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
-                    TOOLS_DIR / "apktool.jar"
-                )
-            elif is_windows:
-                urllib.request.urlretrieve(
-                    "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat",
-                    TOOLS_DIR / "apktool.bat"
-                )
-                urllib.request.urlretrieve(
-                    "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
-                    TOOLS_DIR / "apktool.jar"
-                )
-            print("[+] apktool 설치 완료")
-        except Exception as e:
-            print(f"[!] apktool 설치 실패: {e}")
-    else:
-        print("[*] apktool 이미 설치됨")
+    # ★★★ apktool 2.9.3 설치 (최신 버전) ★★★
+    print("[*] apktool 2.9.3 설치 중...")
+    try:
+        # 기존 apktool 삭제
+        for f in TOOLS_DIR.glob("apktool*"):
+            if f.is_file():
+                f.unlink()
+        
+        if is_linux:
+            # apktool 스크립트 다운로드
+            urllib.request.urlretrieve(
+                "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool",
+                TOOLS_DIR / "apktool"
+            )
+            (TOOLS_DIR / "apktool").chmod(0o755)
+            # apktool 2.9.3 JAR 다운로드
+            urllib.request.urlretrieve(
+                "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
+                TOOLS_DIR / "apktool.jar"
+            )
+        elif is_windows:
+            urllib.request.urlretrieve(
+                "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat",
+                TOOLS_DIR / "apktool.bat"
+            )
+            urllib.request.urlretrieve(
+                "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
+                TOOLS_DIR / "apktool.jar"
+            )
+        print("[+] apktool 2.9.3 설치 완료")
+    except Exception as e:
+        print(f"[!] apktool 설치 실패: {e}")
     
     # 디버그 키스토어 생성
     debug_keystore = TOOLS_DIR / "debug.keystore"
@@ -331,7 +335,6 @@ def extract_package_name(manifest_path):
 def replace_in_all_files(decompile_dir, old_pkg, new_package):
     """모든 파일에서 패키지명 치환 (병렬 처리)"""
     import concurrent.futures
-    import threading
     
     old_path = old_pkg.replace('.', '/')
     new_path = new_package.replace('.', '/')
@@ -403,12 +406,29 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         replace_in_all_files(decompile_dir, old_pkg, new_package)
         job_status[job_id]["progress"] = 40
         
-        # 2. 리빌드
+        # 2. ★★★ apktool 버전 확인 후 -j 옵션 사용 ★★★
         repack_dir = decompile_dir.parent / "repacked"
         repack_dir.mkdir(exist_ok=True)
         
         job_status[job_id]["progress"] = 50
-        run_cmd(["apktool", "b", "-j", "4", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
+        
+        # apktool 버전 확인
+        try:
+            stdout, _ = run_cmd(["apktool", "--version"], timeout=10)
+            apktool_version = stdout.strip()
+            print(f"[*] apktool 버전: {apktool_version}")
+            
+            # 버전이 2.6.0 이상이면 -j 사용
+            if apktool_version >= "2.6.0":
+                run_cmd(["apktool", "b", "-j", "4", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
+            else:
+                print("[*] apktool 버전이 2.6.0 미만, -j 옵션 없이 실행")
+                run_cmd(["apktool", "b", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
+        except Exception as e:
+            # 버전 확인 실패 시 -j 없이 실행
+            print(f"[*] apktool 버전 확인 실패: {e}, 기본 모드로 실행")
+            run_cmd(["apktool", "b", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
+        
         job_status[job_id]["progress"] = 70
         
         # 3. 서명
@@ -473,6 +493,8 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         job_status[job_id]["status"] = "failed"
         job_status[job_id]["result"] = {"error": str(e)}
         print(f"[!] 리빌드 실패 {job_id}: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
