@@ -328,21 +328,21 @@ def extract_package_name(manifest_path):
         pass
     return None
 
-def replace_in_all_files(decompile_dir, old_pkg, new_pkg):
+def replace_in_all_files(decompile_dir, old_pkg, new_package):
     """모든 파일에서 패키지명 치환 (병렬 처리)"""
     import concurrent.futures
     import threading
     
     old_path = old_pkg.replace('.', '/')
-    new_path = new_pkg.replace('.', '/')
+    new_path = new_package.replace('.', '/')
     
     # 1. AndroidManifest.xml 먼저 처리
     manifest_path = decompile_dir / "AndroidManifest.xml"
     if manifest_path.exists():
         with open(manifest_path, 'r', encoding='utf-8') as f:
             manifest = f.read()
-        manifest = re.sub(r'package="[^"]*"', f'package="{new_pkg}"', manifest)
-        manifest = manifest.replace(old_pkg, new_pkg)
+        manifest = re.sub(r'package="[^"]*"', f'package="{new_package}"', manifest)
+        manifest = manifest.replace(old_pkg, new_package)
         with open(manifest_path, 'w', encoding='utf-8') as f:
             f.write(manifest)
     
@@ -354,8 +354,8 @@ def replace_in_all_files(decompile_dir, old_pkg, new_pkg):
             with open(smali_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             content = content.replace(f'L{old_path}/', f'L{new_path}/')
-            content = content.replace(f'L{old_pkg}/R$', f'L{new_pkg}/R$')
-            content = content.replace(old_pkg, new_pkg)
+            content = content.replace(f'L{old_pkg}/R$', f'L{new_package}/R$')
+            content = content.replace(old_pkg, new_package)
             with open(smali_file, 'w', encoding='utf-8') as f:
                 f.write(content)
             return True
@@ -381,7 +381,7 @@ def replace_in_all_files(decompile_dir, old_pkg, new_pkg):
             try:
                 with open(xml_file, 'r', encoding='utf-8') as f:
                     content = f.read()
-                content = content.replace(old_pkg, new_pkg)
+                content = content.replace(old_pkg, new_package)
                 with open(xml_file, 'w', encoding='utf-8') as f:
                     f.write(content)
                 return True
@@ -400,7 +400,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         # 1. 패키지명 치환 (병렬)
         job_status[job_id]["progress"] = 20
-        replace_in_all_files(decompile_dir, old_pkg, new_pkg)
+        replace_in_all_files(decompile_dir, old_pkg, new_package)
         job_status[job_id]["progress"] = 40
         
         # 2. 리빌드
