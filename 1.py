@@ -237,7 +237,6 @@ def install_dependencies():
     is_linux = system == 'linux'
     is_mac = system == 'darwin'
 
-    # apktool 설치 (기존과 동일)
     if not is_tool_installed("apktool"):
         print("[*] apktool 다운로드 중...")
         try:
@@ -266,7 +265,6 @@ def install_dependencies():
     else:
         print("[*] apktool 이미 설치됨")
 
-    # ★★★ jadx 설치 수정 ★★★
     if not is_tool_installed("jadx"):
         print("[*] jadx 다운로드 중...")
         try:
@@ -275,35 +273,21 @@ def install_dependencies():
                 "https://github.com/skylot/jadx/releases/download/v1.4.7/jadx-1.4.7.zip",
                 zip_path
             )
-            
-            # jadx 전용 디렉토리에 압축 해제
-            jadx_dir = TOOLS_DIR / "jadx"
-            jadx_dir.mkdir(exist_ok=True)
-            
             with zipfile.ZipFile(zip_path, 'r') as zf:
-                zf.extractall(jadx_dir)
+                zf.extractall(TOOLS_DIR)
             zip_path.unlink()
-            
-            # 실행 권한 설정
             if is_linux or is_mac:
-                bin_dir = jadx_dir / "bin"
-                if bin_dir.exists():
-                    for f in bin_dir.iterdir():
-                        if f.is_file():
+                jadx_dir = TOOLS_DIR / "jadx"
+                if jadx_dir.exists():
+                    for f in jadx_dir.rglob("*"):
+                        if f.name.endswith((".sh", "")) and not f.suffix:
                             f.chmod(0o755)
-            
-            # PATH에 jadx/bin 추가
-            jadx_bin = TOOLS_DIR / "jadx" / "bin"
-            if jadx_bin.exists():
-                os.environ["PATH"] = str(jadx_bin) + os.pathsep + os.environ.get("PATH", "")
-            
             print("[+] jadx 설치 완료")
         except Exception as e:
             print(f"[!] jadx 설치 실패: {e}")
     else:
         print("[*] jadx 이미 설치됨")
 
-    # Windows SDK 도구 (기존과 동일)
     if is_windows:
         tools_to_download = {
             "aapt2": "https://dl.google.com/android/repository/aapt2-windows-8.0.0-10154469.zip",
@@ -327,13 +311,11 @@ def install_dependencies():
             else:
                 print(f"[*] {tool_name} 이미 설치됨")
     
-    # PATH 업데이트
     os.environ["PATH"] = str(TOOLS_DIR) + os.pathsep + os.environ.get("PATH", "")
     jadx_bin = TOOLS_DIR / "jadx" / "bin"
     if jadx_bin.exists():
         os.environ["PATH"] = str(jadx_bin) + os.pathsep + os.environ["PATH"]
     
-    # 디버그 키스토어 (기존과 동일)
     debug_keystore = TOOLS_DIR / "debug.keystore"
     if not debug_keystore.exists():
         print("[*] 디버그 키스토어 생성 중...")
@@ -414,22 +396,32 @@ def cleanup_job(job_id):
     if job_dir.exists():
         shutil.rmtree(job_dir, ignore_errors=True)
 
-def build_tree(dir_path, rel_path=""):
-    result = []
-    if not dir_path.exists():
-        return result
-    for item in sorted(dir_path.iterdir()):
-        if item.name.startswith('.'):
+def build_tree(root, current=None):
+
+    if current is None:
+        current = root
+
+    items = []
+
+    for item in sorted(current.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+
+        if item.name.startswith("."):
             continue
+
+        rel = str(item.relative_to(root)).replace("\\","/")
+
         node = {
             "name": item.name,
-            "path": str(item.relative_to(dir_path)) if rel_path else item.name,
+            "path": rel,
             "type": "directory" if item.is_dir() else "file"
         }
+
         if item.is_dir():
-            node["children"] = build_tree(item, node["path"])
-        result.append(node)
-    return result
+            node["children"] = build_tree(root, item)
+
+        items.append(node)
+
+    return items
 
 def extract_old_package(manifest_path):
     try:
@@ -443,36 +435,52 @@ def extract_old_package(manifest_path):
     return None
 
 def build_combined_tree(job_dir):
-    """통합 트리 생성 (apktool + jadx)"""
-    combined_tree = []
-    decompile_dir = job_dir / "decompiled"
-    java_dir = job_dir / "java"
-    
-    # apktool 결과
-    if decompile_dir.exists():
-        combined_tree.extend(build_tree(decompile_dir))
-    
-    # jadx Java 소스
-    if java_dir.exists():
-        sources_dir = java_dir / "sources"
-        if sources_dir.exists() and any(sources_dir.iterdir()):
-            java_node = {
+
+    result = []
+
+    apktool_dir = job_dir / "decompiled"
+
+    jadx_dir = job_dir / "java"
+
+    if apktool_dir.exists():
+        result.extend(build_tree(apktool_dir))
+
+    if jadx_dir.exists():
+
+        java_root = None
+
+        # jadx 기본 구조
+        if (jadx_dir / "sources").exists():
+            java_root = jadx_dir / "sources"
+
+        else:
+            # sources가 없으면 java파일이 있는 첫 폴더 탐색
+            for p in jadx_dir.rglob("*"):
+                if p.is_dir():
+                    if any(x.suffix == ".java" for x in p.iterdir()):
+                        java_root = p
+                        break
+
+        if java_root:
+
+            result.append({
                 "name": "java_sources",
                 "path": "java_sources",
                 "type": "directory",
-                "children": build_tree(sources_dir)
-            }
-            combined_tree.append(java_node)
-        elif any(java_dir.iterdir()):
-            java_node = {
-                "name": "java_sources",
-                "path": "java_sources",
+                "children": build_tree(java_root)
+            })
+
+        res_root = jadx_dir / "resources"
+
+        if res_root.exists():
+            result.append({
+                "name": "jadx_resources",
+                "path": "jadx_resources",
                 "type": "directory",
-                "children": build_tree(java_dir)
-            }
-            combined_tree.append(java_node)
-    
-    return combined_tree
+                "children": build_tree(res_root)
+            })
+
+    return result
 
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
@@ -513,17 +521,29 @@ def upload_apk():
 
     # 2. jadx Java 소스 추출
     java_dir = job_dir / "java"
+
     try:
         run_cmd([
-            "jadx", "-d", str(java_dir),
+            "jadx",
+            "-d", str(java_dir),
+    
             "--show-bad-code",
-            "--no-res",
-            "--threads-count", "2",
+            "--deobf",
+            "--deobf-min", "1",
+            "--deobf-max", "64",
+            "--export-gradle",
+    
+            "--threads-count", str(os.cpu_count()),
+    
             str(apk_path)
-        ], timeout=1800)
-        print(f"[+] Java 디컴파일 완료: {java_dir}")
+        ], timeout=3600)
+    
+        java_files = list(java_dir.rglob("*.java"))
+    
+        print(f"[+] Java 파일 {len(java_files)}개 생성")
+    
     except Exception as e:
-        print(f"[WARN] jadx 실패: {e}")
+        print(f"[WARN] jadx 실패 : {e}")
 
     # 3. 통합 트리 생성
     combined_tree = build_combined_tree(job_dir)
@@ -558,33 +578,50 @@ def get_file_tree(job_id):
 
 @app.route('/api/file/<job_id>/<path:file_path>', methods=['GET'])
 def get_file_content(job_id, file_path):
-    job_dir = get_job_dir(job_id)
-    
-    # apktool 결과에서 먼저 찾기
-    decompile_path = job_dir / "decompiled" / file_path
-    if decompile_path.exists() and decompile_path.is_file():
-        target = decompile_path
-    else:
-        # java_sources 경로 처리
-        if file_path.startswith("java_sources/"):
-            java_path = file_path.replace("java_sources/", "")
-            target = job_dir / "java" / "sources" / java_path
-            if not target.exists():
-                target = job_dir / "java" / java_path
-        else:
-            target = job_dir / "decompiled" / file_path
-    
-    if not target.exists() or not target.is_file():
-        abort(404, "파일 없음")
-    
-    try:
-        with open(target, 'r', encoding='utf-8') as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        return jsonify({"error": "바이너리 파일은 편집 불가"}), 400
-    
-    return content
 
+    job_dir = get_job_dir(job_id)
+
+    target = None
+
+    # apktool
+    p = job_dir / "decompiled" / file_path
+
+    if p.exists():
+        target = p
+
+    # jadx java
+    elif file_path.startswith("java_sources/"):
+
+        rel = file_path[len("java_sources/"):]
+
+        root = job_dir / "java"
+
+        if (root / "sources").exists():
+            p = root / "sources" / rel
+        else:
+            p = root / rel
+
+        if p.exists():
+            target = p
+
+    # jadx resources
+    elif file_path.startswith("jadx_resources/"):
+
+        rel = file_path[len("jadx_resources/"):]
+
+        p = job_dir / "java" / "resources" / rel
+
+        if p.exists():
+            target = p
+
+    if target is None or not target.exists():
+        abort(404)
+
+    try:
+        with open(target, "r", encoding="utf-8") as f:
+            return f.read()
+    except UnicodeDecodeError:
+        return jsonify({"error":"바이너리 파일"}),400
 @app.route('/api/file/<job_id>/<path:file_path>', methods=['PUT'])
 def save_file_content(job_id, file_path):
     job_dir = get_job_dir(job_id)
