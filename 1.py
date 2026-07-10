@@ -504,9 +504,14 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             try:
                 env = os.environ.copy()
                 env["_JAVA_OPTIONS"] = "-Xmx128m"
+                
+                # v1+v2+v3 서명 모두 활성화 (Android 11+ 호환)
                 cmd = [
                     apksigner, "sign",
                     "--debug-key",
+                    "--v1-signing-enabled", "true",
+                    "--v2-signing-enabled", "true",
+                    "--v3-signing-enabled", "true",
                     "--out", str(signed_apk),
                     str(aligned_apk)
                 ]
@@ -514,13 +519,32 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
                 if proc.returncode == 0:
                     signed = True
-                    print("[+] apksigner 서명 완료")
+                    print("[+] apksigner 서명 완료 (v1+v2+v3)")
                 else:
                     print(f"[!] apksigner 서명 실패: {proc.stderr}")
+                    
+                    # v2/v3 없이 재시도 (Android 7 미만 호환)
+                    cmd = [
+                        apksigner, "sign",
+                        "--debug-key",
+                        "--v1-signing-enabled", "true",
+                        "--v2-signing-enabled", "false",
+                        "--v3-signing-enabled", "false",
+                        "--out", str(signed_apk),
+                        str(aligned_apk)
+                    ]
+                    print(f"[CMD] {' '.join(cmd)}")
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
+                    if proc.returncode == 0:
+                        signed = True
+                        print("[+] apksigner 서명 완료 (v1 only)")
+                    else:
+                        print(f"[!] apksigner v1 서명도 실패: {proc.stderr}")
+                        
             except Exception as e:
                 print(f"[!] apksigner 서명 실패: {e}")
         
-        # jarsigner fallback
+        # jarsigner fallback (v1만 지원)
         if not signed:
             jarsigner = shutil.which("jarsigner")
             debug_keystore = TOOLS_DIR / "debug.keystore"
@@ -542,7 +566,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                     if proc.returncode == 0:
                         shutil.copy(aligned_apk, signed_apk)
                         signed = True
-                        print("[+] jarsigner 서명 완료")
+                        print("[+] jarsigner 서명 완료 (v1 only)")
                     else:
                         print(f"[!] jarsigner 서명 실패: {proc.stderr}")
                 except Exception as e:
