@@ -343,26 +343,28 @@ def install_dependencies():
 
 # ========== 도구 경로 헬퍼 ==========
 def get_tool_path(tool_name):
+    # 1. 시스템 PATH에서 찾기
     if shutil.which(tool_name):
         return Path(shutil.which(tool_name))
     
+    # 2. TOOLS_DIR 바로 아래
     tool_path = TOOLS_DIR / tool_name
     if tool_path.exists():
         return tool_path
     
-    if platform.system().lower() == 'windows':
-        for ext in ['.bat', '.exe', '.cmd']:
-            tool_path = TOOLS_DIR / f"{tool_name}{ext}"
-            if tool_path.exists():
-                return tool_path
-    
+    # 3. jadx 특별 처리 - 가능한 모든 경로
     if tool_name == "jadx":
-        jadx_bin = TOOLS_DIR / "jadx" / "bin" / "jadx"
-        if jadx_bin.exists():
-            return jadx_bin
-        jadx_bin = TOOLS_DIR / "jadx" / "bin" / "jadx.bat"
-        if jadx_bin.exists():
-            return jadx_bin
+        possible_paths = [
+            TOOLS_DIR / "jadx" / "bin" / "jadx",
+            TOOLS_DIR / "jadx" / "bin" / "jadx.bat",
+            TOOLS_DIR / "jadx" / "jadx-1.4.7" / "bin" / "jadx",
+            TOOLS_DIR / "jadx" / "jadx-1.4.7" / "bin" / "jadx.bat",
+            TOOLS_DIR / "bin" / "jadx",
+            TOOLS_DIR / "bin" / "jadx.bat",
+        ]
+        for path in possible_paths:
+            if path.exists():
+                return path
     
     return None
 
@@ -519,23 +521,50 @@ def upload_apk():
         cleanup_job(job_id)
         return jsonify({"error": f"apktool 디컴파일 실패: {str(e)}"}), 500
 
-    # 2. jadx Java 소스 추출
+    # 2. ★★★ jadx Java 소스 추출 (디버깅 추가) ★★★
     java_dir = job_dir / "java"
-
-    try:
-        run_cmd([
-            "jadx",
-            "-d", str(java_dir),
-        
-            "--threads-count", "2",
-            "--no-res",
-            "--deobf",
-        
-            str(apk_path)
-        ], timeout=3600)
     
-    except Exception as e:
-        print(f"[WARN] jadx 실패 : {e}")
+    # jadx 경로 확인
+    jadx_path = get_tool_path("jadx")
+    print(f"[DEBUG] jadx_path: {jadx_path}")
+    
+    if jadx_path is None:
+        # 가능한 모든 경로 탐색
+        possible_paths = [
+            TOOLS_DIR / "jadx" / "bin" / "jadx",
+            TOOLS_DIR / "jadx" / "jadx-1.4.7" / "bin" / "jadx",
+            TOOLS_DIR / "jadx" / "bin" / "jadx.bat",
+            TOOLS_DIR / "bin" / "jadx",
+            TOOLS_DIR / "jadx",
+        ]
+        for p in possible_paths:
+            if p.exists():
+                print(f"[DEBUG] 찾음: {p}")
+                jadx_path = p
+                break
+    
+    if jadx_path is None:
+        print(f"[ERROR] jadx 실행 파일을 찾을 수 없음")
+        print(f"[ERROR] TOOLS_DIR: {TOOLS_DIR}")
+        print(f"[ERROR] TOOLS_DIR 내용: {list(TOOLS_DIR.iterdir())}")
+        # jadx 없이 계속 진행 (apktool 결과만 반환)
+    else:
+        try:
+            cmd = [
+                str(jadx_path),
+                "-d", str(java_dir),
+                "--threads-count", "2",
+                "--no-res",
+                "--deobf",
+                str(apk_path)
+            ]
+            print(f"[DEBUG] jadx 명령어: {' '.join(cmd)}")
+            run_cmd(cmd, timeout=3600)
+            print(f"[+] Java 디컴파일 완료: {java_dir}")
+        except Exception as e:
+            print(f"[ERROR] jadx 실행 실패: {e}")
+            import traceback
+            traceback.print_exc()
 
     # 3. 통합 트리 생성
     combined_tree = build_combined_tree(job_dir)
