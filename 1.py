@@ -504,9 +504,19 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             else:
                 yml_content += '\ndoNotCompress:\n  - resources.arsc\n'
             
+            # renameManifestPackage 업데이트
+            if 'renameManifestPackage:' in yml_content:
+                yml_content = re.sub(
+                    r'renameManifestPackage:\s*.*',
+                    f'renameManifestPackage: {new_package}',
+                    yml_content
+                )
+            else:
+                yml_content += f'\nrenameManifestPackage: {new_package}\n'
+            
             with open(yml_path, 'w', encoding='utf-8') as f:
                 f.write(yml_content)
-            print("[+] apktool.yml에 doNotCompress: resources.arsc 추가")
+            print("[+] apktool.yml 업데이트 완료 (doNotCompress + renameManifestPackage)")
         
         # 2. apktool 리빌드
         repack_dir = decompile_dir.parent / "repacked"
@@ -524,16 +534,16 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         unsigned_apk = repack_dir / "unsigned.apk"
         
-        # ★ apktool 버전 확인 후 옵션 결정
+        # apktool 빌드 명령 (--no-auto-rename 제거)
         try:
             stdout, _ = run_cmd(["apktool", "--version"], timeout=10)
             apktool_version = stdout.strip()
             print(f"[*] apktool 버전: {apktool_version}")
             
+            # --no-auto-rename 제거하여 패키지명 변경 유지
             if apktool_version >= "2.6.0":
                 cmd = [
                     str(apktool_path), "b",
-                    "--no-auto-rename",
                     "--no-debug",
                     str(decompile_dir),
                     "-o", str(unsigned_apk)
@@ -603,6 +613,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 env = os.environ.copy()
                 env["_JAVA_OPTIONS"] = "-Xmx128m"
                 
+                # 먼저 v1+v2+v3 시도
                 cmd = [
                     apksigner, "sign",
                     "--debug-key",
@@ -618,8 +629,9 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                     signed = True
                     print("[+] apksigner 서명 완료 (v1+v2+v3)")
                 else:
-                    print(f"[!] apksigner 서명 실패: {proc.stderr}")
+                    print(f"[!] apksigner v1+v2+v3 서명 실패: {proc.stderr}")
                     
+                    # v1 only로 재시도
                     cmd = [
                         apksigner, "sign",
                         "--debug-key",
