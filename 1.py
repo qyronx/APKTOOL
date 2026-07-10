@@ -437,51 +437,52 @@ def extract_old_package(manifest_path):
     return None
 
 def build_combined_tree(job_dir):
-
+    """apktool + jadx 통합 트리 생성"""
     result = []
-
+    
+    # 1. apktool 결과 (리소스, smali)
     apktool_dir = job_dir / "decompiled"
-
-    jadx_dir = job_dir / "java"
-
     if apktool_dir.exists():
-        result.extend(build_tree(apktool_dir))
-
+        result.append({
+            "name": "apktool_output",
+            "path": "apktool_output",
+            "type": "directory",
+            "children": build_tree(apktool_dir)
+        })
+    
+    # 2. jadx Java 소스
+    jadx_dir = job_dir / "java"
     if jadx_dir.exists():
-
-        java_root = None
-
-        # jadx 기본 구조
-        if (jadx_dir / "sources").exists():
-            java_root = jadx_dir / "sources"
-
-        else:
-            # sources가 없으면 java파일이 있는 첫 폴더 탐색
-            for p in jadx_dir.rglob("*"):
-                if p.is_dir():
-                    if any(x.suffix == ".java" for x in p.iterdir()):
-                        java_root = p
-                        break
-
-        if java_root:
-
+        # sources 디렉토리 찾기
+        sources_dir = jadx_dir / "sources"
+        if sources_dir.exists() and any(sources_dir.iterdir()):
             result.append({
                 "name": "java_sources",
                 "path": "java_sources",
                 "type": "directory",
-                "children": build_tree(java_root)
+                "children": build_tree(sources_dir)
             })
-
-        res_root = jadx_dir / "resources"
-
-        if res_root.exists():
+        else:
+            # sources가 없으면 java 전체에서 .java 파일 찾기
+            java_files = list(jadx_dir.rglob("*.java"))
+            if java_files:
+                result.append({
+                    "name": "java_sources",
+                    "path": "java_sources",
+                    "type": "directory",
+                    "children": build_tree(jadx_dir)
+                })
+        
+        # jadx 리소스 (--no-res 옵션으로 없을 수 있음)
+        res_dir = jadx_dir / "resources"
+        if res_dir.exists() and any(res_dir.iterdir()):
             result.append({
                 "name": "jadx_resources",
                 "path": "jadx_resources",
                 "type": "directory",
-                "children": build_tree(res_root)
+                "children": build_tree(res_dir)
             })
-
+    
     return result
 
 # ========== API 엔드포인트 ==========
@@ -501,6 +502,7 @@ def upload_apk():
     orig_path = job_dir / "original.apk"
     file.save(orig_path)
 
+    # XAPK 처리
     if file.filename.endswith('.xapk'):
         with zipfile.ZipFile(orig_path, 'r') as zf:
             apk_list = [f for f in zf.namelist() if f.endswith('.apk')]
@@ -513,19 +515,19 @@ def upload_apk():
     else:
         apk_path = orig_path
 
-    # 1. apktool 디컴파일
+    # ★★★ 1. apktool: 리소스 디코딩만 (AndroidManifest.xml, res/, smali/) ★★★
     decompile_dir = job_dir / "decompiled"
     try:
         run_cmd(["apktool", "d", "-f", "-o", str(decompile_dir), str(apk_path)])
+        print(f"[+] apktool 디코딩 완료: {decompile_dir}")
     except Exception as e:
         cleanup_job(job_id)
-        return jsonify({"error": f"apktool 디컴파일 실패: {str(e)}"}), 500
+        return jsonify({"error": f"apktool 디코딩 실패: {str(e)}"}), 500
 
-    # 2. ★★★ jadx Java 소스 추출 (디버깅 추가) ★★★
+    # ★★★ 2. jadx: Java 소스 추출 (여기가 핵심) ★★★
     java_dir = job_dir / "java"
-    
-    # jadx 경로 확인
     jadx_path = get_tool_path("jadx")
+    
     print(f"[DEBUG] jadx_path: {jadx_path}")
     
     if jadx_path is None:
@@ -533,7 +535,6 @@ def upload_apk():
         possible_paths = [
             TOOLS_DIR / "jadx" / "bin" / "jadx",
             TOOLS_DIR / "jadx" / "jadx-1.4.7" / "bin" / "jadx",
-            TOOLS_DIR / "jadx" / "bin" / "jadx.bat",
             TOOLS_DIR / "bin" / "jadx",
             TOOLS_DIR / "jadx",
         ]
@@ -544,29 +545,38 @@ def upload_apk():
                 break
     
     if jadx_path is None:
-        print(f"[ERROR] jadx 실행 파일을 찾을 수 없음")
-        print(f"[ERROR] TOOLS_DIR: {TOOLS_DIR}")
+        print(f"[ERROR] jadx 실행 파일을 찾을 수 없음!")
         print(f"[ERROR] TOOLS_DIR 내용: {list(TOOLS_DIR.iterdir())}")
-        # jadx 없이 계속 진행 (apktool 결과만 반환)
+        # jadx 없이 apktool 결과만 반환
     else:
         try:
+            # ★ jadx로 Java 소스 추출 (리소스 제외, 난독화 해제)
             cmd = [
                 str(jadx_path),
-                "-d", str(java_dir),
-                "--threads-count", "2",
-                "--no-res",
-                "--deobf",
-                str(apk_path)
+                "-d", str(java_dir),           # 출력 디렉토리
+                "--show-bad-code",              # 오류가 있어도 코드 표시
+                "--no-res",                     # 리소스 제외 (apktool에서 처리)
+                "--deobf",                      # 난독화 해제 시도
+                "--threads-count", "4",         # CPU 코어 수에 맞게
+                str(apk_path)                   # 입력 APK
             ]
             print(f"[DEBUG] jadx 명령어: {' '.join(cmd)}")
             run_cmd(cmd, timeout=3600)
             print(f"[+] Java 디컴파일 완료: {java_dir}")
+            
+            # jadx 결과 구조 확인
+            if java_dir.exists():
+                print(f"[DEBUG] java_dir 내용: {list(java_dir.iterdir())}")
+                sources_dir = java_dir / "sources"
+                if sources_dir.exists():
+                    print(f"[DEBUG] sources 내용: {list(sources_dir.iterdir())[:5]}...")
+                
         except Exception as e:
             print(f"[ERROR] jadx 실행 실패: {e}")
             import traceback
             traceback.print_exc()
 
-    # 3. 통합 트리 생성
+    # ★★★ 3. 통합 트리 생성 (apktool + jadx) ★★★
     combined_tree = build_combined_tree(job_dir)
 
     meta = {
@@ -599,50 +609,56 @@ def get_file_tree(job_id):
 
 @app.route('/api/file/<job_id>/<path:file_path>', methods=['GET'])
 def get_file_content(job_id, file_path):
-
     job_dir = get_job_dir(job_id)
-
     target = None
 
-    # apktool
-    p = job_dir / "decompiled" / file_path
+    # 1. apktool_output 경로
+    if file_path.startswith("apktool_output/"):
+        rel = file_path[len("apktool_output/"):]
+        p = job_dir / "decompiled" / rel
+        if p.exists():
+            target = p
 
-    if p.exists():
-        target = p
-
-    # jadx java
+    # 2. java_sources 경로
     elif file_path.startswith("java_sources/"):
-
         rel = file_path[len("java_sources/"):]
-
-        root = job_dir / "java"
-
-        if (root / "sources").exists():
-            p = root / "sources" / rel
+        # jadx가 sources/ 하위에 생성
+        p1 = job_dir / "java" / "sources" / rel
+        if p1.exists():
+            target = p1
         else:
-            p = root / rel
+            # sources 없이 바로 생성된 경우
+            p2 = job_dir / "java" / rel
+            if p2.exists():
+                target = p2
 
-        if p.exists():
-            target = p
-
-    # jadx resources
+    # 3. jadx_resources 경로
     elif file_path.startswith("jadx_resources/"):
-
         rel = file_path[len("jadx_resources/"):]
-
         p = job_dir / "java" / "resources" / rel
-
         if p.exists():
             target = p
+
+    # 4. 기타 (직접 경로)
+    else:
+        p = job_dir / "decompiled" / file_path
+        if p.exists():
+            target = p
+        else:
+            p = job_dir / "java" / "sources" / file_path
+            if p.exists():
+                target = p
 
     if target is None or not target.exists():
-        abort(404)
+        abort(404, "파일 없음")
 
     try:
-        with open(target, "r", encoding="utf-8") as f:
-            return f.read()
+        with open(target, 'r', encoding='utf-8') as f:
+            content = f.read()
     except UnicodeDecodeError:
-        return jsonify({"error":"바이너리 파일"}),400
+        return jsonify({"error": "바이너리 파일은 편집 불가"}), 400
+    
+    return content
 @app.route('/api/file/<job_id>/<path:file_path>', methods=['PUT'])
 def save_file_content(job_id, file_path):
     job_dir = get_job_dir(job_id)
