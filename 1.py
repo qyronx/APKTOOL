@@ -525,8 +525,21 @@ def get_file_tree(job_id):
 @app.route('/api/file/<job_id>/<path:file_path>', methods=['GET'])
 def get_file_content(job_id, file_path):
     job_dir = get_job_dir(job_id)
-    decompile_dir = job_dir / "decompiled"
-    target = decompile_dir / file_path
+    
+    # apktool 결과에서 먼저 찾기
+    decompile_path = job_dir / "decompiled" / file_path
+    if decompile_path.exists() and decompile_path.is_file():
+        target = decompile_path
+    else:
+        # java_sources 경로 처리
+        if file_path.startswith("java_sources/"):
+            java_path = file_path.replace("java_sources/", "")
+            target = job_dir / "java" / "sources" / java_path
+            if not target.exists():
+                target = job_dir / "java" / java_path
+        else:
+            # smali 등 apktool 파일
+            target = job_dir / "decompiled" / file_path
     
     if not target.exists() or not target.is_file():
         abort(404, "파일 없음")
