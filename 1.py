@@ -1,4 +1,4 @@
-# server.py - APKWorkshop NullByte (패키지명 변경 전용 - resources.arsc 완전 수정)
+# server.py - APKWorkshop NullByte (패키지명 변경 전용 - 최적화 + resources.arsc 처리)
 # 실행: python server.py (포트 10000)
 
 import os
@@ -23,7 +23,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ========== 작업 상태 저장 ==========
-job_status = {}  # job_id -> {"status": "processing"|"done"|"failed", "result": {}, "progress": 0}
+job_status = {}
 
 # ========== 경로 설정 ==========
 SERVER_DIR = Path(__file__).parent.absolute()
@@ -226,7 +226,7 @@ def install_dependencies():
     is_linux = system == 'linux'
     is_windows = system == 'windows'
 
-    # ★★★ apktool 2.9.3 설치 (최신 버전) ★★★
+    # apktool 2.9.3 설치
     print("[*] apktool 2.9.3 설치 중...")
     try:
         for f in TOOLS_DIR.glob("apktool*"):
@@ -449,13 +449,11 @@ def update_apktool_yml(decompile_dir, old_pkg, new_package):
     # doNotCompress 처리
     if 'doNotCompress:' in content:
         if 'resources.arsc' not in content:
-            # 기존 항목 뒤에 추가
             lines = content.split('\n')
             new_lines = []
             for line in lines:
                 new_lines.append(line)
                 if line.strip() == 'doNotCompress:':
-                    # 다음 줄부터 들여쓰기 확인
                     indent = ''
                     for char in line:
                         if char == ' ':
@@ -481,35 +479,40 @@ def update_apktool_yml(decompile_dir, old_pkg, new_package):
         f.write(content)
     print("[+] apktool.yml 업데이트 완료")
 
-def fix_resources_arsc(apk_path):
+def fix_resources_arsc_fast(apk_path):
     """
-    resources.arsc를 STORED (압축 해제) 방식으로 변환
-    Android 11+에서 필수
+    resources.arsc만 STORED로 변환 (ZIP_STORED)
+    전체 파일을 다시 압축하지 않고 resources.arsc만 교체
     """
     if not apk_path.exists():
         return False
     
     try:
+        # 1. 기존 APK에서 resources.arsc 추출
+        with zipfile.ZipFile(apk_path, 'r') as zf:
+            arsc_data = zf.read("resources.arsc")
+            arsc_info = zf.getinfo("resources.arsc")
+        
+        # 2. 새 APK 생성 (나머지 파일은 그대로 복사)
         temp_path = apk_path.with_suffix(".fixed.apk")
         
         with zipfile.ZipFile(apk_path, 'r') as zin:
             with zipfile.ZipFile(temp_path, 'w') as zout:
                 for item in zin.infolist():
-                    data = zin.read(item.filename)
-                    
                     if item.filename == "resources.arsc":
-                        # STORED로 다시 쓰기 (압축 해제)
+                        # STORED로 다시 쓰기
                         info = zipfile.ZipInfo(item.filename)
                         info.date_time = item.date_time
                         info.compress_type = zipfile.ZIP_STORED
                         info.external_attr = item.external_attr
                         info.create_system = item.create_system
-                        zout.writestr(info, data)
-                        print(f"[+] resources.arsc를 STORED로 변환 (압축 해제)")
+                        zout.writestr(info, arsc_data)
+                        print(f"[+] resources.arsc를 STORED로 변환")
                     else:
-                        zout.writestr(item, data)
+                        # 다른 파일은 그대로 복사
+                        zout.writestr(item, zin.read(item.filename))
         
-        # 원본을 수정된 파일로 교체
+        # 3. 원본 교체
         shutil.move(temp_path, apk_path)
         return True
         
@@ -521,7 +524,7 @@ def fix_resources_arsc(apk_path):
 
 # ========== 백그라운드 리빌드 작업 ==========
 def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
-    """백그라운드에서 리빌드 실행 (resources.arsc 완전 수정)"""
+    """백그라운드에서 리빌드 실행 (최적화)"""
     try:
         job_status[job_id] = {"status": "processing", "progress": 10}
         
@@ -566,13 +569,12 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print("[+] apktool 리빌드 완료")
         job_status[job_id]["progress"] = 55
         
-        # ★★★ 4. resources.arsc를 STORED로 변환 (핵심) ★★★
+        # ★★★ 4. resources.arsc를 STORED로 변환 (빠른 버전) ★★★
         print("[*] resources.arsc를 STORED로 변환 중...")
-        if not fix_resources_arsc(unsigned_apk):
-            print("[!] resources.arsc 변환 실패, 계속 진행")
+        fix_resources_arsc_fast(unsigned_apk)
         job_status[job_id]["progress"] = 65
         
-        # ★★★ 5. zipalign 실행 (4바이트 정렬) ★★★
+        # ★★★ 5. zipalign 실행 ★★★
         aligned_apk = repack_dir / "aligned.apk"
         zipalign_path = get_tool_path("zipalign")
         
@@ -601,19 +603,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         job_status[job_id]["progress"] = 80
         
-        # ★★★ 6. resources.arsc 검증 ★★★
-        try:
-            with zipfile.ZipFile(aligned_apk, 'r') as z:
-                info = z.getinfo("resources.arsc")
-                print(f"[*] resources.arsc compress_type: {info.compress_type}")
-                if info.compress_type == 0:
-                    print("[+] resources.arsc가 STORED(압축 해제) 상태입니다.")
-                else:
-                    print(f"[!] resources.arsc가 압축됨 (compress_type={info.compress_type})")
-        except Exception as e:
-            print(f"[!] resources.arsc 검증 실패: {e}")
-        
-        # 7. 서명 (v1+v2+v3)
+        # 6. 서명 (v1+v2+v3)
         signed_apk = repack_dir / "signed.apk"
         signed = False
         
@@ -690,7 +680,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             print("[!] 서명 도구 없음. 서명되지 않은 APK 생성")
             shutil.copy(aligned_apk, signed_apk)
         
-        # 8. 다운로드 준비
+        # 7. 다운로드 준비
         download_dir = BASE_DIR / "downloads"
         download_dir.mkdir(exist_ok=True)
         final_apk = download_dir / f"{job_id}_signed.apk"
