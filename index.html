@@ -4,14 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>APKWorkshop</title>
-    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #0b0e14;
             color: #c8d6e5;
@@ -21,10 +16,7 @@
             display: flex;
             justify-content: center;
         }
-        .container {
-            max-width: 1600px;
-            width: 100%;
-        }
+        .container { max-width: 800px; width: 100%; }
         .header {
             display: flex;
             justify-content: space-between;
@@ -32,225 +24,33 @@
             border-bottom: 1px solid #2e3b4e;
             padding-bottom: 12px;
             margin-bottom: 30px;
-            flex-wrap: wrap;
         }
-        .brand {
-            font-size: 26px;
-            font-weight: 700;
-            color: #00e5ff;
-            letter-spacing: -1px;
-            text-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
-        }
-        .brand span {
-            color: #ff6b6b;
-            margin-right: 8px;
-        }
-        .status-badge {
-            background: #1e2a3a;
-            padding: 6px 16px;
-            border-radius: 30px;
-            font-size: 14px;
-            border-left: 3px solid #00e5ff;
-            color: #9aaec9;
-        }
-        .status-badge i {
-            color: #00e5ff;
-            margin-right: 8px;
-        }
-        .workspace {
-            display: flex;
-            gap: 25px;
-            flex-wrap: wrap;
-        }
-        .left-panel {
-            flex: 3;
-            min-width: 380px;
-            background: #141a24;
-            border-radius: 16px;
-            padding: 20px;
-            border: 1px solid #2a3748;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-        }
-        .right-panel {
-            flex: 2;
-            min-width: 320px;
-            background: #141a24;
-            border-radius: 16px;
-            padding: 20px;
-            border: 1px solid #2a3748;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-            display: flex;
-            flex-direction: column;
-            max-height: 90vh;
-        }
+        .brand { font-size: 26px; font-weight: 700; color: #00e5ff; }
+        .brand span { color: #ff6b6b; margin-right: 8px; }
         .upload-zone {
             border: 2px dashed #2e4a6a;
             border-radius: 14px;
-            padding: 28px 10px;
+            padding: 40px 10px;
             text-align: center;
-            transition: 0.2s;
             cursor: pointer;
             background: #0f1621;
             margin-bottom: 24px;
-        }
-        .upload-zone:hover, .upload-zone.dragover {
-            border-color: #00e5ff;
-            background: #182233;
-        }
-        .upload-zone i {
-            font-size: 38px;
-            color: #4a6a8a;
-            margin-bottom: 8px;
-        }
-        .upload-zone p {
-            color: #7f95b0;
-            font-size: 15px;
-        }
-        .upload-zone .note {
-            font-size: 12px;
-            color: #4f6b8a;
-            margin-top: 6px;
-        }
-        #fileInput {
-            display: none;
-        }
-        .file-browser-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 16px 0 10px 0;
-            border-bottom: 1px solid #26323f;
-            padding-bottom: 8px;
-        }
-        .file-browser-header h3 {
-            font-size: 16px;
-            font-weight: 400;
-            color: #a0b8d0;
-        }
-        .file-browser-header i {
-            color: #00e5ff;
-            margin-right: 8px;
-        }
-        .tree-wrapper {
-            background: #0d121c;
-            border-radius: 12px;
-            padding: 8px 4px;
-            max-height: 420px;
-            overflow-y: auto;
-            font-size: 13px;
-            border: 1px solid #1f2b39;
-        }
-        .tree-item {
-            padding: 3px 6px 3px 12px;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            white-space: nowrap;
-            user-select: none;
-        }
-        .tree-item:hover {
-            background: #1f2c3e;
-        }
-        .tree-item i {
-            width: 18px;
-            color: #6a8aae;
-        }
-        .tree-item .file-icon {
-            color: #b0c7e0;
-        }
-        .tree-item .folder-icon {
-            color: #f0c27f;
-        }
-        .tree-item .folder-toggle {
-            cursor: pointer;
-            width: 16px;
-            text-align: center;
-            color: #6a8aae;
-            font-size: 12px;
             transition: 0.2s;
         }
-        .tree-item .folder-toggle:hover {
-            color: #00e5ff;
+        .upload-zone:hover { border-color: #00e5ff; background: #182233; }
+        .upload-zone i { font-size: 48px; color: #4a6a8a; margin-bottom: 12px; }
+        .upload-zone p { color: #7f95b0; font-size: 15px; }
+        .upload-zone .note { font-size: 12px; color: #4f6b8a; margin-top: 6px; }
+        #fileInput { display: none; }
+        .panel {
+            background: #141a24;
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid #2a3748;
+            margin-bottom: 20px;
         }
-        .tree-item .folder-name {
-            cursor: pointer;
-        }
-        .tree-item .file-name {
-            cursor: pointer;
-            padding-left: 22px;
-        }
-        .tree-indent {
-            padding-left: 18px;
-            display: block;
-        }
-        .tree-indent.collapsed {
-            display: none;
-        }
-        .file-content-area {
-            margin-top: 18px;
-            background: #0b111c;
-            border-radius: 12px;
-            border: 1px solid #1f2b39;
-            padding: 6px;
-        }
-        .file-content-area .toolbar {
-            display: flex;
-            gap: 10px;
-            padding: 6px 10px;
-            background: #131b29;
-            border-radius: 10px 10px 0 0;
-            border-bottom: 1px solid #26323f;
-        }
-        .file-content-area .toolbar span {
-            color: #6f8aa8;
-            font-size: 13px;
-        }
-        .file-content-area .toolbar button {
-            background: transparent;
-            border: none;
-            color: #b0c7e0;
-            cursor: pointer;
-            font-size: 14px;
-            padding: 0 6px;
-        }
-        .file-content-area .toolbar button:hover {
-            color: #00e5ff;
-        }
-        #editor {
-            width: 100%;
-            height: 280px;
-            background: #0a0f18;
-            border: none;
-            color: #d4e2f0;
-            font-family: 'Fira Code', monospace;
-            font-size: 13px;
-            padding: 12px;
-            resize: vertical;
-            outline: none;
-            border-radius: 0 0 12px 12px;
-            tab-size: 4;
-        }
-        .action-panel {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            flex: 1;
-        }
-        .action-box {
-            background: #0f1622;
-            border-radius: 14px;
-            padding: 18px 16px;
-            border: 1px solid #26323f;
-        }
-        .action-box label {
-            display: block;
-            font-size: 13px;
-            color: #9bb0cc;
-            margin-bottom: 6px;
-            letter-spacing: 0.3px;
-        }
-        .action-box input {
+        .panel label { display: block; font-size: 13px; color: #9bb0cc; margin-bottom: 6px; }
+        .panel input {
             width: 100%;
             background: #0b111c;
             border: 1px solid #2a3a50;
@@ -260,491 +60,249 @@
             font-family: 'Fira Code', monospace;
             font-size: 14px;
             outline: none;
-            transition: 0.2s;
         }
-        .action-box input:focus {
-            border-color: #00e5ff;
-            box-shadow: 0 0 12px rgba(0, 229, 255, 0.15);
-        }
-        .action-box .hint {
-            font-size: 11px;
-            color: #4e6b8a;
-            margin-top: 6px;
-        }
-        .btn-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 12px;
-        }
+        .panel input:focus { border-color: #00e5ff; }
         .btn {
-            background: #1f2d42;
+            padding: 12px 24px;
             border: none;
-            padding: 10px 18px;
             border-radius: 30px;
-            color: #d0def0;
-            font-weight: 500;
+            font-weight: 600;
             font-size: 14px;
             cursor: pointer;
             transition: 0.15s;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            border: 1px solid #2f405a;
-            flex: 1 1 auto;
         }
-        .btn-primary {
-            background: #0077be;
-            border-color: #0088dd;
-            color: white;
-            font-weight: 600;
-        }
-        .btn-primary:hover {
-            background: #0095dd;
-            box-shadow: 0 0 20px rgba(0, 180, 255, 0.25);
-        }
-        .btn-danger {
-            background: #8a2a3a;
-            border-color: #b34a5a;
-        }
-        .btn-danger:hover {
-            background: #b34050;
-        }
-        .btn-success {
-            background: #1d7a5a;
-            border-color: #2a9a72;
-        }
-        .btn-success:hover {
-            background: #2a9a72;
-        }
-        .btn:disabled {
-            opacity: 0.4;
-            pointer-events: none;
-            filter: grayscale(0.6);
-        }
+        .btn-primary { background: #0077be; color: white; }
+        .btn-primary:hover { background: #0095dd; }
+        .btn-success { background: #1d7a5a; color: white; }
+        .btn-success:hover { background: #2a9a72; }
+        .btn-danger { background: #8a2a3a; color: white; }
+        .btn-danger:hover { background: #b34050; }
+        .btn:disabled { opacity: 0.4; pointer-events: none; }
         .status-console {
-            margin-top: 12px;
             background: #0a0f18;
             border-radius: 12px;
             padding: 12px 14px;
             border: 1px solid #1a2635;
             font-size: 13px;
             color: #7d9abc;
-            min-height: 60px;
-            max-height: 140px;
+            min-height: 80px;
+            max-height: 200px;
             overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-all;
             font-family: 'Fira Code', monospace;
         }
-        .status-console .ok {
-            color: #5fdb9a;
-        }
-        .status-console .err {
-            color: #f77a8a;
-        }
-        .status-console .info {
-            color: #62b5f0;
-        }
-        .download-area {
-            margin-top: 6px;
+        .status-console .ok { color: #5fdb9a; }
+        .status-console .err { color: #f77a8a; }
+        .status-console .info { color: #62b5f0; }
+        .info-box {
+            background: #0f1622;
+            border-radius: 12px;
+            padding: 12px 16px;
+            border: 1px solid #26323f;
+            margin: 10px 0;
             display: flex;
-            gap: 12px;
+            justify-content: space-between;
             align-items: center;
-            flex-wrap: wrap;
         }
-        #downloadLink {
-            color: #00e5ff;
-            text-decoration: none;
-            font-weight: 500;
-            border-bottom: 1px dashed #2a5a7a;
-            display: inline-block;
-        }
-        .spacer {
-            flex: 1;
-        }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: #121a26; }
-        ::-webkit-scrollbar-thumb { background: #2a3f58; border-radius: 10px; }
+        .info-box .label { color: #6f8aa8; font-size: 13px; }
+        .info-box .value { color: #00e5ff; font-size: 14px; font-weight: 600; }
+        .flex { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
         <div class="brand"><span>⧩</span>APKWorkshop</div>
-        <div class="status-badge"><i class="fas fa-circle"></i> CORE · PORT 10000</div>
+        <div style="font-size:13px; color:#4f6b8a;">패키지명 변경 전용</div>
     </div>
 
-    <div class="workspace">
-        <!-- LEFT PANEL -->
-        <div class="left-panel">
-            <!-- Upload -->
-            <div class="upload-zone" id="dropZone">
-                <i class="fas fa-cloud-upload-alt"></i>
-                <p>APK / XAPK 드랍 또는 클릭하여 업로드</p>
-                <div class="note">최대 300MB · 디컴파일 + 수정 가능</div>
-                <input type="file" id="fileInput" accept=".apk,.xapk">
-            </div>
+    <!-- 업로드 -->
+    <div class="upload-zone" id="dropZone">
+        <i class="fas fa-cloud-upload-alt"></i>
+        <p>APK / XAPK 드랍 또는 클릭하여 업로드</p>
+        <div class="note">디컴파일 후 원본 패키지명을 추출합니다</div>
+        <input type="file" id="fileInput" accept=".apk,.xapk">
+    </div>
 
-            <!-- File tree -->
-            <div class="file-browser-header">
-                <h3><i class="fas fa-folder-tree"></i> 디컴파일 구조</h3>
-                <span style="font-size:12px; color:#4f6b8a;" id="jobIdLabel">job: none</span>
-            </div>
-            <div class="tree-wrapper" id="fileTree">
-                <div style="color:#4f6b8a; padding:12px; text-align:center;">← APK 업로드 후 트리 표시</div>
-            </div>
-
-            <!-- File editor -->
-            <div class="file-content-area">
-                <div class="toolbar">
-                    <span><i class="far fa-file-code"></i> <span id="currentFileLabel">선택된 파일 없음</span></span>
-                    <span class="spacer"></span>
-                    <button id="saveFileBtn" title="저장 (서버 반영)"><i class="fas fa-save"></i></button>
-                </div>
-                <textarea id="editor" placeholder="파일을 선택하면 내용이 표시됩니다." spellcheck="false"></textarea>
-            </div>
+    <!-- 상태 -->
+    <div class="panel">
+        <div class="info-box">
+            <span class="label">📦 작업 ID</span>
+            <span class="value" id="jobIdLabel">없음</span>
         </div>
-
-        <!-- RIGHT PANEL -->
-        <div class="right-panel">
-            <div class="action-panel">
-                <div class="action-box">
-                    <label><i class="fas fa-cube"></i> 새 패키지명 (재패키징)</label>
-                    <input type="text" id="newPackageInput" placeholder="예: com.your.company.app" value="com.nullbyte.modded">
-                    <div class="hint">AndroidManifest + smali 전체 치환</div>
-                </div>
-
-                <div class="action-box" style="flex:1;">
-                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                        <button class="btn btn-primary" id="rebuildBtn"><i class="fas fa-sync-alt"></i> 리빌드 + 서명</button>
-                        <button class="btn btn-danger" id="resetBtn"><i class="fas fa-trash-alt"></i> 초기화</button>
-                    </div>
-                    <div class="download-area" style="margin-top:14px;">
-                        <span style="color:#7f95b0;">⬇ 다운로드</span>
-                        <a href="#" id="downloadLink" style="pointer-events:none; opacity:0.5;">준비된 APK 없음</a>
-                        <button class="btn btn-success" id="forceDownloadBtn" disabled style="padding:6px 16px;"><i class="fas fa-download"></i> 받기</button>
-                    </div>
-                </div>
-
-                <!-- 콘솔 로그 -->
-                <div class="status-console" id="consoleLog">
-                    <span class="info">▶ 시스템 온라인 · 대기 중</span>
-                </div>
-            </div>
+        <div class="info-box">
+            <span class="label">📱 원본 패키지명</span>
+            <span class="value" id="originalPackageLabel">-</span>
         </div>
+    </div>
+
+    <!-- 패키지명 변경 -->
+    <div class="panel">
+        <label><i class="fas fa-cube"></i> 새 패키지명</label>
+        <input type="text" id="newPackageInput" placeholder="예: com.your.new.app" value="com.example.newapp">
+        <div style="font-size:11px; color:#4e6b8a; margin-top:6px;">AndroidManifest + smali + res 전체 치환</div>
+        <div class="flex">
+            <button class="btn btn-primary" id="rebuildBtn"><i class="fas fa-sync-alt"></i> 리빌드 + 서명</button>
+            <button class="btn btn-danger" id="resetBtn"><i class="fas fa-trash-alt"></i> 초기화</button>
+        </div>
+        <div style="margin-top:12px;">
+            <a href="#" id="downloadLink" style="color:#00e5ff; text-decoration:none; opacity:0.5; pointer-events:none;">다운로드 준비 안됨</a>
+            <button class="btn btn-success" id="forceDownloadBtn" disabled style="padding:8px 16px; font-size:13px;"><i class="fas fa-download"></i> 받기</button>
+        </div>
+    </div>
+
+    <!-- 콘솔 -->
+    <div class="status-console" id="consoleLog">
+        <span class="info">▶ 시스템 온라인 · APK 업로드 대기 중</span>
     </div>
 </div>
 
 <script>
-    (function() {
-        // ---------- 상태 ----------
-        const STATE = {
-            jobId: null,
-            fileTree: [],
-            currentFilePath: null,
-            currentFileContent: '',
-            modified: false,
-            apkReady: false,
-            signedApkUrl: null,
-        };
+(function() {
+    const STATE = {
+        jobId: null,
+        originalPackage: null,
+        signedUrl: null,
+    };
 
-        // DOM refs
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-        const fileTreeEl = document.getElementById('fileTree');
-        const editor = document.getElementById('editor');
-        const currentFileLabel = document.getElementById('currentFileLabel');
-        const jobIdLabel = document.getElementById('jobIdLabel');
-        const consoleLog = document.getElementById('consoleLog');
-        const newPackageInput = document.getElementById('newPackageInput');
-        const rebuildBtn = document.getElementById('rebuildBtn');
-        const resetBtn = document.getElementById('resetBtn');
-        const saveFileBtn = document.getElementById('saveFileBtn');
-        const downloadLink = document.getElementById('downloadLink');
-        const forceDownloadBtn = document.getElementById('forceDownloadBtn');
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const jobIdLabel = document.getElementById('jobIdLabel');
+    const originalPackageLabel = document.getElementById('originalPackageLabel');
+    const consoleLog = document.getElementById('consoleLog');
+    const newPackageInput = document.getElementById('newPackageInput');
+    const rebuildBtn = document.getElementById('rebuildBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const downloadLink = document.getElementById('downloadLink');
+    const forceDownloadBtn = document.getElementById('forceDownloadBtn');
 
-        // ---------- 헬퍼: 콘솔 ----------
-        function log(msg, type = 'info') {
-            const colorMap = { info: 'info', ok: 'ok', err: 'err' };
-            const cls = colorMap[type] || 'info';
-            consoleLog.innerHTML += `<div class="${cls}">> ${msg}</div>`;
-            consoleLog.scrollTop = consoleLog.scrollHeight;
+    const API_BASE = '/api';
+
+    function log(msg, type = 'info') {
+        const cls = { info: 'info', ok: 'ok', err: 'err' }[type] || 'info';
+        consoleLog.innerHTML += `<div class="${cls}">> ${msg}</div>`;
+        consoleLog.scrollTop = consoleLog.scrollHeight;
+    }
+
+    function clearLog() { consoleLog.innerHTML = ''; }
+
+    async function apiCall(endpoint, method = 'GET', body = null) {
+        const opts = { method, headers: { 'Accept': 'application/json' } };
+        if (body && !(body instanceof FormData)) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        } else if (body instanceof FormData) {
+            opts.body = body;
         }
-
-        function clearLog() {
-            consoleLog.innerHTML = '';
+        const res = await fetch(`${API_BASE}${endpoint}`, opts);
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`HTTP ${res.status}: ${errText}`);
         }
+        return await res.json();
+    }
 
-        // ---------- API 호출 ----------
-        const API_BASE = 'https://apkworkshop.onrender.com/api';
-
-        async function apiCall(endpoint, method = 'GET', body = null) {
-            const opts = {
-                method,
-                headers: { 'Accept': 'application/json' },
-            };
-            if (body && !(body instanceof FormData)) {
-                opts.headers['Content-Type'] = 'application/json';
-                opts.body = JSON.stringify(body);
-            } else if (body instanceof FormData) {
-                opts.body = body;
-            }
-            try {
-                const res = await fetch(`${API_BASE}${endpoint}`, opts);
-                if (!res.ok) {
-                    const errText = await res.text();
-                    throw new Error(`HTTP ${res.status}: ${errText}`);
-                }
-                const contentType = res.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                    return await res.json();
-                } else {
-                    return await res.text();
-                }
-            } catch (e) {
-                log(`API 오류: ${e.message}`, 'err');
-                throw e;
-            }
+    async function uploadFile(file) {
+        const form = new FormData();
+        form.append('file', file);
+        clearLog();
+        log(`업로드 시작: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+        try {
+            const data = await apiCall('/upload', 'POST', form);
+            STATE.jobId = data.job_id;
+            STATE.originalPackage = data.original_package;
+            jobIdLabel.textContent = STATE.jobId;
+            originalPackageLabel.textContent = STATE.originalPackage;
+            log(`디컴파일 완료 · 원본 패키지명: ${STATE.originalPackage}`, 'ok');
+            newPackageInput.value = `com.${STATE.originalPackage.split('.').slice(-1)[0] || 'newapp'}.mod`;
+        } catch (e) {
+            log(`업로드 실패: ${e.message}`, 'err');
         }
+    }
 
-        // ---------- 파일 업로드 ----------
-        async function uploadFile(file) {
-            const form = new FormData();
-            form.append('file', file);
-            clearLog();
-            log(`업로드 시작: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
-            try {
-                const data = await apiCall('/upload', 'POST', form);
-                STATE.jobId = data.job_id;
-                STATE.apkReady = true;
-                jobIdLabel.textContent = `job: ${STATE.jobId}`;
-                log(`디컴파일 완료 · job: ${STATE.jobId}`, 'ok');
-                await loadFileTree();
-                log('파일 트리 로드 완료', 'ok');
-            } catch (e) {
-                log(`업로드 실패: ${e.message}`, 'err');
-                STATE.apkReady = false;
-            }
+    async function rebuildAndSign() {
+        if (!STATE.jobId) {
+            log('먼저 APK를 업로드하세요.', 'err');
+            return;
         }
-
-        // ---------- 파일 트리 로드 ----------
-        async function loadFileTree() {
-            if (!STATE.jobId) return;
-            try {
-                const data = await apiCall(`/files/${STATE.jobId}`);
-                STATE.fileTree = data.tree || [];
-                renderTree(STATE.fileTree);
-            } catch (e) {
-                log(`트리 로드 실패: ${e.message}`, 'err');
-            }
+        const newPkg = newPackageInput.value.trim();
+        if (!newPkg) {
+            log('새 패키지명을 입력하세요.', 'err');
+            return;
         }
-
-        // ========== 폴더 토글 기능이 있는 렌더링 ==========
-        function renderTree(nodes, parentEl = null, depth = 0) {
-            const container = parentEl || fileTreeEl;
-            container.innerHTML = '';
-            if (!nodes || nodes.length === 0) {
-                container.innerHTML = '<div style="color:#4f6b8a; padding:12px; text-align:center;">(비어 있음)</div>';
-                return;
-            }
-            nodes.forEach(node => {
-                const isDir = node.type === 'directory';
-                const div = document.createElement('div');
-                div.className = 'tree-item';
-                div.dataset.path = node.path;
-                div.dataset.type = node.type;
-
-                let html = '';
-                
-                if (isDir) {
-                    // 폴더: 토글 버튼 + 폴더 아이콘 + 폴더명
-                    html += `<span class="folder-toggle" data-path="${node.path}">▼</span>`;
-                    html += `<i class="fas fa-folder folder-icon"></i>`;
-                    html += `<span class="folder-name" data-path="${node.path}">${node.name}</span>`;
-                    div.innerHTML = html;
-                    
-                    // 폴더 클릭 시 토글
-                    const toggleSpan = div.querySelector('.folder-toggle');
-                    const nameSpan = div.querySelector('.folder-name');
-                    
-                    const toggleFolder = (e) => {
-                        e.stopPropagation();
-                        const childContainer = div.nextElementSibling;
-                        if (childContainer && childContainer.classList.contains('tree-indent')) {
-                            const isCollapsed = childContainer.classList.toggle('collapsed');
-                            toggleSpan.textContent = isCollapsed ? '▶' : '▼';
-                        }
-                    };
-                    
-                    toggleSpan.addEventListener('click', toggleFolder);
-                    nameSpan.addEventListener('click', toggleFolder);
-                    
-                    container.appendChild(div);
-                    
-                    // 자식 노드 컨테이너 (초기에는 열려있음)
-                    if (node.children && node.children.length > 0) {
-                        const childContainer = document.createElement('div');
-                        childContainer.className = 'tree-indent';
-                        container.appendChild(childContainer);
-                        renderTree(node.children, childContainer, depth + 1);
-                    }
-                } else {
-                    // 파일: 아이콘 + 파일명 (클릭 시 내용 로드)
-                    html += `<i class="fas fa-file-code file-icon" style="margin-left:22px;"></i>`;
-                    html += `<span class="file-name" data-path="${node.path}">${node.name}</span>`;
-                    div.innerHTML = html;
-                    
-                    const fileSpan = div.querySelector('.file-name');
-                    fileSpan.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        loadFileContent(node.path);
-                    });
-                    
-                    container.appendChild(div);
-                }
-            });
+        if (newPkg === STATE.originalPackage) {
+            log('기존 패키지명과 동일합니다. 다른 이름을 입력하세요.', 'err');
+            return;
         }
+        clearLog();
+        log(`리빌드 시작: ${STATE.originalPackage} → ${newPkg}`, 'info');
+        rebuildBtn.disabled = true;
+        try {
+            const data = await apiCall(`/rebuild/${STATE.jobId}`, 'POST', { new_package: newPkg });
+            STATE.signedUrl = data.download_url;
+            log(`리빌드 완료: ${data.message}`, 'ok');
+            downloadLink.href = `${API_BASE}${STATE.signedUrl}`;
+            downloadLink.style.opacity = '1';
+            downloadLink.style.pointerEvents = 'auto';
+            downloadLink.textContent = `📥 ${newPkg}.apk 다운로드`;
+            forceDownloadBtn.disabled = false;
+        } catch (e) {
+            log(`리빌드 실패: ${e.message}`, 'err');
+        } finally {
+            rebuildBtn.disabled = false;
+        }
+    }
 
-        // ---------- 파일 내용 로드 ----------
-        async function loadFileContent(filePath) {
-            if (!STATE.jobId) return;
-            try {
-                const content = await apiCall(`/file/${STATE.jobId}/${encodeURIComponent(filePath)}`);
-                STATE.currentFilePath = filePath;
-                STATE.currentFileContent = content;
-                editor.value = content;
-                currentFileLabel.textContent = filePath.split('/').pop();
-                log(`파일 로드: ${filePath}`, 'info');
-                STATE.modified = false;
-            } catch (e) {
-                log(`파일 로드 실패: ${e.message}`, 'err');
+    function resetWorkspace() {
+        STATE.jobId = null;
+        STATE.originalPackage = null;
+        STATE.signedUrl = null;
+        jobIdLabel.textContent = '없음';
+        originalPackageLabel.textContent = '-';
+        downloadLink.href = '#';
+        downloadLink.style.opacity = '0.5';
+        downloadLink.style.pointerEvents = 'none';
+        downloadLink.textContent = '다운로드 준비 안됨';
+        forceDownloadBtn.disabled = true;
+        clearLog();
+        log('워크스페이스 초기화', 'info');
+    }
+
+    // 이벤트
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const file = files[0];
+            if (file.name.endsWith('.apk') || file.name.endsWith('.xapk')) {
+                uploadFile(file);
+            } else {
+                log('APK 또는 XAPK 파일만 지원됩니다.', 'err');
             }
         }
-
-        // ---------- 파일 저장 ----------
-        async function saveCurrentFile() {
-            if (!STATE.jobId || !STATE.currentFilePath) {
-                log('저장할 파일이 없습니다.', 'err');
-                return;
-            }
-            const newContent = editor.value;
-            try {
-                await apiCall(`/file/${STATE.jobId}/${encodeURIComponent(STATE.currentFilePath)}`, 'PUT', { content: newContent });
-                STATE.currentFileContent = newContent;
-                STATE.modified = false;
-                log(`파일 저장 완료: ${STATE.currentFilePath}`, 'ok');
-            } catch (e) {
-                log(`저장 실패: ${e.message}`, 'err');
-            }
+    });
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            uploadFile(e.target.files[0]);
         }
+        fileInput.value = '';
+    });
 
-        // ---------- 리빌드 + 패키지명 변경 ----------
-        async function rebuildAndSign() {
-            if (!STATE.jobId) {
-                log('먼저 APK를 업로드하세요.', 'err');
-                return;
-            }
-            const newPkg = newPackageInput.value.trim();
-            if (!newPkg) {
-                log('패키지명을 입력하세요.', 'err');
-                return;
-            }
-            clearLog();
-            log(`리빌드 시작 · 새 패키지: ${newPkg}`, 'info');
-            rebuildBtn.disabled = true;
-            try {
-                const data = await apiCall(`/rebuild/${STATE.jobId}`, 'POST', { new_package: newPkg });
-                log(`리빌드 완료 · 서명됨`, 'ok');
-                const signedUrl = data.download_url || `/api/download/${STATE.jobId}`;
-                STATE.signedApkUrl = signedUrl;
-                downloadLink.href = `https://apkworkshop.onrender.com${signedUrl}`;
-                downloadLink.style.pointerEvents = 'auto';
-                downloadLink.style.opacity = '1';
-                downloadLink.textContent = `[ ${newPkg}.apk ]`;
-                forceDownloadBtn.disabled = false;
-                log(`다운로드 준비 완료`, 'ok');
-            } catch (e) {
-                log(`리빌드 실패: ${e.message}`, 'err');
-            } finally {
-                rebuildBtn.disabled = false;
-            }
+    rebuildBtn.addEventListener('click', rebuildAndSign);
+    resetBtn.addEventListener('click', resetWorkspace);
+
+    forceDownloadBtn.addEventListener('click', () => {
+        if (STATE.signedUrl) {
+            window.open(`${API_BASE}${STATE.signedUrl}`, '_blank');
         }
+    });
 
-        // ---------- 초기화 ----------
-        function resetWorkspace() {
-            STATE.jobId = null;
-            STATE.fileTree = [];
-            STATE.currentFilePath = null;
-            STATE.currentFileContent = '';
-            STATE.apkReady = false;
-            STATE.signedApkUrl = null;
-            fileTreeEl.innerHTML = '<div style="color:#4f6b8a; padding:12px; text-align:center;">← APK 업로드 후 트리 표시</div>';
-            editor.value = '';
-            currentFileLabel.textContent = '선택된 파일 없음';
-            jobIdLabel.textContent = 'job: none';
-            downloadLink.href = '#';
-            downloadLink.style.pointerEvents = 'none';
-            downloadLink.style.opacity = '0.5';
-            downloadLink.textContent = '준비된 APK 없음';
-            forceDownloadBtn.disabled = true;
-            clearLog();
-            log('워크스페이스 초기화', 'info');
-        }
-
-        // ---------- 이벤트 바인딩 ----------
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            dropZone.classList.add('dragover');
-        });
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.classList.remove('dragover');
-        });
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            dropZone.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                const file = files[0];
-                if (file.name.endsWith('.apk') || file.name.endsWith('.xapk')) {
-                    uploadFile(file);
-                } else {
-                    log('APK 또는 XAPK 파일만 지원됩니다.', 'err');
-                }
-            }
-        });
-        dropZone.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                uploadFile(e.target.files[0]);
-            }
-            fileInput.value = '';
-        });
-
-        saveFileBtn.addEventListener('click', saveCurrentFile);
-        rebuildBtn.addEventListener('click', rebuildAndSign);
-        resetBtn.addEventListener('click', resetWorkspace);
-
-        forceDownloadBtn.addEventListener('click', () => {
-            if (STATE.signedApkUrl) {
-                window.open(`https://apkworkshop.onrender.com${STATE.signedApkUrl}`, '_blank');
-            }
-        });
-
-        editor.addEventListener('input', () => {
-            STATE.modified = true;
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault();
-                saveCurrentFile();
-            }
-        });
-
-        log('APKWorkshop · 포트 10000 대기', 'info');
-        log('APK/XAPK 업로드 후 디컴파일 및 수정 가능', 'info');
-    })();
+    log('APKWorkshop · 패키지명 변경 전용', 'info');
+    log('APK 업로드 후 새 패키지명을 입력하고 리빌드하세요.', 'info');
+})();
 </script>
 </body>
 </html>
