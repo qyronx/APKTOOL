@@ -106,6 +106,21 @@
         .info-box .label { color: #6f8aa8; font-size: 13px; }
         .info-box .value { color: #00e5ff; font-size: 14px; font-weight: 600; }
         .flex { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #1a2635;
+            border-radius: 3px;
+            margin: 8px 0;
+            overflow: hidden;
+        }
+        .progress-bar .fill {
+            height: 100%;
+            background: #00e5ff;
+            width: 0%;
+            transition: width 0.5s;
+            border-radius: 3px;
+        }
     </style>
 </head>
 <body>
@@ -144,6 +159,9 @@
             <button class="btn btn-primary" id="rebuildBtn"><i class="fas fa-sync-alt"></i> 리빌드 + 서명</button>
             <button class="btn btn-danger" id="resetBtn"><i class="fas fa-trash-alt"></i> 초기화</button>
         </div>
+        <div class="progress-bar" id="progressBar" style="display:none;">
+            <div class="fill" id="progressFill"></div>
+        </div>
         <div style="margin-top:12px;">
             <a href="#" id="downloadLink" style="color:#00e5ff; text-decoration:none; opacity:0.5; pointer-events:none;">다운로드 준비 안됨</a>
             <button class="btn btn-success" id="forceDownloadBtn" disabled style="padding:8px 16px; font-size:13px;"><i class="fas fa-download"></i> 받기</button>
@@ -162,6 +180,7 @@
         jobId: null,
         originalPackage: null,
         signedUrl: null,
+        statusInterval: null,
     };
 
     const dropZone = document.getElementById('dropZone');
@@ -174,6 +193,8 @@
     const resetBtn = document.getElementById('resetBtn');
     const downloadLink = document.getElementById('downloadLink');
     const forceDownloadBtn = document.getElementById('forceDownloadBtn');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
 
     const API_BASE = '/api';
 
@@ -181,9 +202,20 @@
         const cls = { info: 'info', ok: 'ok', err: 'err' }[type] || 'info';
         consoleLog.innerHTML += `<div class="${cls}">> ${msg}</div>`;
         consoleLog.scrollTop = consoleLog.scrollHeight;
+        console.log(`[${type}] ${msg}`);
     }
 
     function clearLog() { consoleLog.innerHTML = ''; }
+
+    function setProgress(percent) {
+        if (percent > 0) {
+            progressBar.style.display = 'block';
+            progressFill.style.width = `${percent}%`;
+        } else {
+            progressBar.style.display = 'none';
+            progressFill.style.width = '0%';
+        }
+    }
 
     async function apiCall(endpoint, method = 'GET', body = null) {
         const opts = { 
@@ -196,8 +228,10 @@
         } else if (body instanceof FormData) {
             opts.body = body;
         }
+        
+        const url = `${API_BASE}${endpoint}`;
         try {
-            const res = await fetch(`${API_BASE}${endpoint}`, opts);
+            const res = await fetch(url, opts);
             if (!res.ok) {
                 const errText = await res.text();
                 throw new Error(`HTTP ${res.status}: ${errText}`);
@@ -213,7 +247,8 @@
         const form = new FormData();
         form.append('file', file);
         clearLog();
-        log(`업로드 시작: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`);
+        setProgress(0);
+        log(`업로드 시작: ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)`, 'info');
         try {
             const data = await apiCall('/upload', 'POST', form);
             STATE.jobId = data.job_id;
@@ -221,11 +256,44 @@
             jobIdLabel.textContent = STATE.jobId;
             originalPackageLabel.textContent = STATE.originalPackage;
             log(`디컴파일 완료 · 원본 패키지명: ${STATE.originalPackage}`, 'ok');
-            // ★★★ 자동 변경 제거 - 사용자가 직접 입력하도록 ★★★
             newPackageInput.placeholder = `예: com.${STATE.originalPackage.split('.').slice(-1)[0] || 'newapp'}.mod`;
         } catch (e) {
             log(`업로드 실패: ${e.message}`, 'err');
         }
+    }
+
+    function checkStatus() {
+        if (!STATE.jobId) return;
+        
+        apiCall(`/status/${STATE.jobId}`, 'GET')
+            .then(data => {
+                setProgress(data.progress || 0);
+                
+                if (data.status === 'done') {
+                    clearInterval(STATE.statusInterval);
+                    STATE.statusInterval = null;
+                    STATE.signedUrl = data.result.download_url;
+                    log(`✅ 리빌드 완료: ${data.result.message}`, 'ok');
+                    downloadLink.href = `${API_BASE}${STATE.signedUrl}`;
+                    downloadLink.style.opacity = '1';
+                    downloadLink.style.pointerEvents = 'auto';
+                    downloadLink.textContent = `📥 다운로드`;
+                    forceDownloadBtn.disabled = false;
+                    rebuildBtn.disabled = false;
+                    setProgress(100);
+                } else if (data.status === 'failed') {
+                    clearInterval(STATE.statusInterval);
+                    STATE.statusInterval = null;
+                    log(`❌ 리빌드 실패: ${data.result.error}`, 'err');
+                    rebuildBtn.disabled = false;
+                    setProgress(0);
+                } else {
+                    log(`⏳ 처리 중... ${data.progress || 0}%`, 'info');
+                }
+            })
+            .catch(e => {
+                log(`상태 확인 실패: ${e.message}`, 'err');
+            });
     }
 
     async function rebuildAndSign() {
@@ -242,26 +310,39 @@
             log('기존 패키지명과 동일합니다. 다른 이름을 입력하세요.', 'err');
             return;
         }
+        
         clearLog();
-        log(`리빌드 시작: ${STATE.originalPackage} → ${newPkg}`, 'info');
+        setProgress(0);
+        log(`리빌드 시작: ${STATE.originalPackage} → ${newPkg} (백그라운드)`, 'info');
         rebuildBtn.disabled = true;
+        downloadLink.style.opacity = '0.5';
+        downloadLink.style.pointerEvents = 'none';
+        downloadLink.textContent = '처리 중...';
+        forceDownloadBtn.disabled = true;
+        
         try {
             const data = await apiCall(`/rebuild/${STATE.jobId}`, 'POST', { new_package: newPkg });
-            STATE.signedUrl = data.download_url;
-            log(`리빌드 완료: ${data.message}`, 'ok');
-            downloadLink.href = `${API_BASE}${STATE.signedUrl}`;
-            downloadLink.style.opacity = '1';
-            downloadLink.style.pointerEvents = 'auto';
-            downloadLink.textContent = `📥 ${newPkg}.apk 다운로드`;
-            forceDownloadBtn.disabled = false;
+            log(`✅ 리빌드 작업 시작됨: ${data.message}`, 'ok');
+            
+            // 상태 폴링 시작
+            if (STATE.statusInterval) {
+                clearInterval(STATE.statusInterval);
+            }
+            STATE.statusInterval = setInterval(checkStatus, 2000);
+            checkStatus(); // 즉시 한 번 실행
+            
         } catch (e) {
-            log(`리빌드 실패: ${e.message}`, 'err');
-        } finally {
+            log(`리빌드 시작 실패: ${e.message}`, 'err');
             rebuildBtn.disabled = false;
+            setProgress(0);
         }
     }
 
     function resetWorkspace() {
+        if (STATE.statusInterval) {
+            clearInterval(STATE.statusInterval);
+            STATE.statusInterval = null;
+        }
         STATE.jobId = null;
         STATE.originalPackage = null;
         STATE.signedUrl = null;
@@ -274,6 +355,8 @@
         downloadLink.style.pointerEvents = 'none';
         downloadLink.textContent = '다운로드 준비 안됨';
         forceDownloadBtn.disabled = true;
+        rebuildBtn.disabled = false;
+        setProgress(0);
         clearLog();
         log('워크스페이스 초기화', 'info');
     }
@@ -311,8 +394,9 @@
         }
     });
 
-    log('APKWorkshop · 패키지명 변경 전용', 'info');
+    log('APKWorkshop · 패키지명 변경 전용 (비동기 처리)', 'info');
     log('APK 업로드 후 새 패키지명을 입력하고 리빌드하세요.', 'info');
+    log('리빌드는 백그라운드에서 처리되며 진행률이 표시됩니다.', 'info');
 })();
 </script>
 </body>
