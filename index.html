@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>APKWorkshop · NullByte</title>
+    <title>APKWorkshop</title>
     <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
@@ -25,7 +25,6 @@
             max-width: 1600px;
             width: 100%;
         }
-        /* 헤더 – NullByte 스타일 */
         .header {
             display: flex;
             justify-content: space-between;
@@ -58,7 +57,6 @@
             color: #00e5ff;
             margin-right: 8px;
         }
-        /* 메인 레이아웃 – 2컬럼 */
         .workspace {
             display: flex;
             gap: 25px;
@@ -85,7 +83,6 @@
             flex-direction: column;
             max-height: 90vh;
         }
-        /* 업로드 영역 */
         .upload-zone {
             border: 2px dashed #2e4a6a;
             border-radius: 14px;
@@ -117,7 +114,6 @@
         #fileInput {
             display: none;
         }
-        /* 파일 트리 & 에디터 영역 (좌측) */
         .file-browser-header {
             display: flex;
             justify-content: space-between;
@@ -146,12 +142,12 @@
         }
         .tree-item {
             padding: 3px 6px 3px 12px;
-            cursor: pointer;
             border-radius: 4px;
             display: flex;
             align-items: center;
             gap: 6px;
             white-space: nowrap;
+            user-select: none;
         }
         .tree-item:hover {
             background: #1f2c3e;
@@ -166,8 +162,30 @@
         .tree-item .folder-icon {
             color: #f0c27f;
         }
+        .tree-item .folder-toggle {
+            cursor: pointer;
+            width: 16px;
+            text-align: center;
+            color: #6a8aae;
+            font-size: 12px;
+            transition: 0.2s;
+        }
+        .tree-item .folder-toggle:hover {
+            color: #00e5ff;
+        }
+        .tree-item .folder-name {
+            cursor: pointer;
+        }
+        .tree-item .file-name {
+            cursor: pointer;
+            padding-left: 22px;
+        }
         .tree-indent {
             padding-left: 18px;
+            display: block;
+        }
+        .tree-indent.collapsed {
+            display: none;
         }
         .file-content-area {
             margin-top: 18px;
@@ -213,7 +231,6 @@
             border-radius: 0 0 12px 12px;
             tab-size: 4;
         }
-        /* 우측 패널 – 패키지명 변경 & 액션 */
         .action-panel {
             display: flex;
             flex-direction: column;
@@ -346,7 +363,6 @@
         .spacer {
             flex: 1;
         }
-        /* 스크롤바 */
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: #121a26; }
         ::-webkit-scrollbar-thumb { background: #2a3f58; border-radius: 10px; }
@@ -356,6 +372,7 @@
 <div class="container">
     <div class="header">
         <div class="brand"><span>⧩</span>APKWorkshop</div>
+        <div class="status-badge"><i class="fas fa-circle"></i> CORE · PORT 10000</div>
     </div>
 
     <div class="workspace">
@@ -423,13 +440,13 @@
     (function() {
         // ---------- 상태 ----------
         const STATE = {
-            jobId: null,               // 현재 작업 ID (서버에서 생성)
-            fileTree: [],             // { name, path, type, children? }
-            currentFilePath: null,    // 에디터에 로드된 파일 경로
+            jobId: null,
+            fileTree: [],
+            currentFilePath: null,
             currentFileContent: '',
             modified: false,
-            apkReady: false,          // 디컴파일 완료?
-            signedApkUrl: null,       // 다운로드 링크
+            apkReady: false,
+            signedApkUrl: null,
         };
 
         // DOM refs
@@ -459,7 +476,7 @@
             consoleLog.innerHTML = '';
         }
 
-        // ---------- API 호출 (포드 10000) ----------
+        // ---------- API 호출 ----------
         const API_BASE = 'https://apkworkshop.onrender.com/api';
 
         async function apiCall(endpoint, method = 'GET', body = null) {
@@ -523,7 +540,8 @@
             }
         }
 
-        function renderTree(nodes, parentEl = null) {
+        // ========== 폴더 토글 기능이 있는 렌더링 ==========
+        function renderTree(nodes, parentEl = null, depth = 0) {
             const container = parentEl || fileTreeEl;
             container.innerHTML = '';
             if (!nodes || nodes.length === 0) {
@@ -531,27 +549,59 @@
                 return;
             }
             nodes.forEach(node => {
+                const isDir = node.type === 'directory';
                 const div = document.createElement('div');
                 div.className = 'tree-item';
-                const isDir = node.type === 'directory';
-                const icon = isDir ? 'fa-folder' : 'fa-file-code';
-                const iconCls = isDir ? 'folder-icon' : 'file-icon';
-                div.innerHTML = `<i class="fas ${icon} ${iconCls}"></i> ${node.name}`;
                 div.dataset.path = node.path;
                 div.dataset.type = node.type;
-                if (!isDir) {
-                    div.style.cursor = 'pointer';
-                    div.addEventListener('click', (e) => {
+
+                let html = '';
+                
+                if (isDir) {
+                    // 폴더: 토글 버튼 + 폴더 아이콘 + 폴더명
+                    html += `<span class="folder-toggle" data-path="${node.path}">▼</span>`;
+                    html += `<i class="fas fa-folder folder-icon"></i>`;
+                    html += `<span class="folder-name" data-path="${node.path}">${node.name}</span>`;
+                    div.innerHTML = html;
+                    
+                    // 폴더 클릭 시 토글
+                    const toggleSpan = div.querySelector('.folder-toggle');
+                    const nameSpan = div.querySelector('.folder-name');
+                    
+                    const toggleFolder = (e) => {
+                        e.stopPropagation();
+                        const childContainer = div.nextElementSibling;
+                        if (childContainer && childContainer.classList.contains('tree-indent')) {
+                            const isCollapsed = childContainer.classList.toggle('collapsed');
+                            toggleSpan.textContent = isCollapsed ? '▶' : '▼';
+                        }
+                    };
+                    
+                    toggleSpan.addEventListener('click', toggleFolder);
+                    nameSpan.addEventListener('click', toggleFolder);
+                    
+                    container.appendChild(div);
+                    
+                    // 자식 노드 컨테이너 (초기에는 열려있음)
+                    if (node.children && node.children.length > 0) {
+                        const childContainer = document.createElement('div');
+                        childContainer.className = 'tree-indent';
+                        container.appendChild(childContainer);
+                        renderTree(node.children, childContainer, depth + 1);
+                    }
+                } else {
+                    // 파일: 아이콘 + 파일명 (클릭 시 내용 로드)
+                    html += `<i class="fas fa-file-code file-icon" style="margin-left:22px;"></i>`;
+                    html += `<span class="file-name" data-path="${node.path}">${node.name}</span>`;
+                    div.innerHTML = html;
+                    
+                    const fileSpan = div.querySelector('.file-name');
+                    fileSpan.addEventListener('click', (e) => {
                         e.stopPropagation();
                         loadFileContent(node.path);
                     });
-                }
-                container.appendChild(div);
-                if (isDir && node.children && node.children.length > 0) {
-                    const childContainer = document.createElement('div');
-                    childContainer.className = 'tree-indent';
-                    container.appendChild(childContainer);
-                    renderTree(node.children, childContainer);
+                    
+                    container.appendChild(div);
                 }
             });
         }
@@ -608,7 +658,7 @@
                 log(`리빌드 완료 · 서명됨`, 'ok');
                 const signedUrl = data.download_url || `/api/download/${STATE.jobId}`;
                 STATE.signedApkUrl = signedUrl;
-                downloadLink.href = `http://localhost:10000${signedUrl}`;
+                downloadLink.href = `https://apkworkshop.onrender.com${signedUrl}`;
                 downloadLink.style.pointerEvents = 'auto';
                 downloadLink.style.opacity = '1';
                 downloadLink.textContent = `[ ${newPkg}.apk ]`;
@@ -643,7 +693,6 @@
         }
 
         // ---------- 이벤트 바인딩 ----------
-        // 드래그 앤 드롭
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             dropZone.classList.add('dragover');
@@ -672,28 +721,20 @@
             fileInput.value = '';
         });
 
-        // 저장 버튼
         saveFileBtn.addEventListener('click', saveCurrentFile);
-
-        // 리빌드
         rebuildBtn.addEventListener('click', rebuildAndSign);
-
-        // 초기화
         resetBtn.addEventListener('click', resetWorkspace);
 
-        // 강제 다운로드 (링크 클릭)
         forceDownloadBtn.addEventListener('click', () => {
             if (STATE.signedApkUrl) {
-                window.open(`http://localhost:10000${STATE.signedApkUrl}`, '_blank');
+                window.open(`https://apkworkshop.onrender.com${STATE.signedApkUrl}`, '_blank');
             }
         });
 
-        // editor 변경 감지 (수정 표시)
         editor.addEventListener('input', () => {
             STATE.modified = true;
         });
 
-        // 추가: Ctrl+S 저장
         document.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
@@ -701,8 +742,7 @@
             }
         });
 
-        // 초기 로그
-        log('NullByte APKWorkshop · 포트 10000 대기', 'info');
+        log('APKWorkshop · 포트 10000 대기', 'info');
         log('APK/XAPK 업로드 후 디컴파일 및 수정 가능', 'info');
     })();
 </script>
