@@ -479,6 +479,7 @@ def upload_apk():
     else:
         apk_path = orig_path
 
+    # 1. apktool 디컴파일
     decompile_dir = job_dir / "decompiled"
     try:
         run_cmd(["apktool", "d", "-f", "-o", str(decompile_dir), str(apk_path)])
@@ -486,13 +487,47 @@ def upload_apk():
         cleanup_job(job_id)
         return jsonify({"error": f"apktool 디컴파일 실패: {str(e)}"}), 500
 
+    # 2. jadx Java 소스 추출
     java_dir = job_dir / "java"
     try:
-        run_cmd(["jadx", "-d", str(java_dir), str(apk_path)])
+        run_cmd([
+            "jadx", "-d", str(java_dir),
+            "--show-bad-code",
+            "--no-res",
+            "--threads-count", "2",
+            str(apk_path)
+        ], timeout=1800)
+        print(f"[+] Java 디컴파일 완료: {java_dir}")
     except Exception as e:
         print(f"[WARN] jadx 실패: {e}")
 
-    tree = build_tree(decompile_dir)
+    # 3. ★★★ 통합 트리 생성 (apktool + jadx)
+    combined_tree = []
+    
+    # apktool 결과
+    if decompile_dir.exists():
+        combined_tree.extend(build_tree(decompile_dir))
+    
+    # jadx Java 소스
+    if java_dir.exists():
+        sources_dir = java_dir / "sources"
+        if sources_dir.exists() and any(sources_dir.iterdir()):
+            java_node = {
+                "name": "java_sources",
+                "path": "java_sources",
+                "type": "directory",
+                "children": build_tree(sources_dir)
+            }
+            combined_tree.append(java_node)
+        elif any(java_dir.iterdir()):
+            java_node = {
+                "name": "java_sources",
+                "path": "java_sources",
+                "type": "directory",
+                "children": build_tree(java_dir)
+            }
+            combined_tree.append(java_node)
+
     meta = {
         "job_id": job_id,
         "apk_path": str(apk_path),
@@ -505,10 +540,9 @@ def upload_apk():
 
     return jsonify({
         "job_id": job_id,
-        "tree": tree,
+        "tree": combined_tree,  # ★ 통합 트리 반환
         "message": "디컴파일 완료"
     })
-
 @app.route('/api/files/<job_id>', methods=['GET'])
 def get_file_tree(job_id):
     job_dir = get_job_dir(job_id)
