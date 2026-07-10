@@ -274,7 +274,7 @@
                     STATE.statusInterval = null;
                     STATE.signedUrl = data.result.download_url;
                     log(`✅ 리빌드 완료: ${data.result.message}`, 'ok');
-                    downloadLink.href = `${API_BASE}${STATE.signedUrl}`;
+                    downloadLink.href = `${STATE.signedUrl}`;
                     downloadLink.style.opacity = '1';
                     downloadLink.style.pointerEvents = 'auto';
                     downloadLink.textContent = `📥 다운로드`;
@@ -390,7 +390,7 @@
 
     forceDownloadBtn.addEventListener('click', () => {
         if (STATE.signedUrl) {
-            window.open(`${API_BASE}${STATE.signedUrl}`, '_blank');
+            window.open(`${STATE.signedUrl}`, '_blank');
         }
     });
 
