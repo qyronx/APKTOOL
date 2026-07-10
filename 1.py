@@ -553,9 +553,35 @@ def get_file_tree(job_id):
     if not decompile_dir.exists():
         return jsonify({"error": "디컴파일 디렉토리 없음"}), 404
     
-    tree = build_tree(decompile_dir)
-    return jsonify({"tree": tree})
-
+    # ★ 통합 트리 생성
+    combined_tree = []
+    
+    # apktool 결과
+    if decompile_dir.exists():
+        combined_tree.extend(build_tree(decompile_dir))
+    
+    # jadx Java 소스
+    java_dir = job_dir / "java"
+    if java_dir.exists():
+        sources_dir = java_dir / "sources"
+        if sources_dir.exists() and any(sources_dir.iterdir()):
+            java_node = {
+                "name": "java_sources",
+                "path": "java_sources",
+                "type": "directory",
+                "children": build_tree(sources_dir)
+            }
+            combined_tree.append(java_node)
+        elif any(java_dir.iterdir()):
+            java_node = {
+                "name": "java_sources",
+                "path": "java_sources",
+                "type": "directory",
+                "children": build_tree(java_dir)
+            }
+            combined_tree.append(java_node)
+    
+    return jsonify({"tree": combined_tree})
 @app.route('/api/file/<job_id>/<path:file_path>', methods=['GET'])
 def get_file_content(job_id, file_path):
     job_dir = get_job_dir(job_id)
