@@ -1,4 +1,4 @@
-# server.py - APKWorkshop NullByte (패키지명 변경 전용 - 비동기 처리 + 최적화)
+# server.py - APKWorkshop NullByte (패키지명 변경 전용 - resources.arsc 완전 수정)
 # 실행: python server.py (포트 10000)
 
 import os
@@ -214,6 +214,7 @@ def _install_zipalign():
         print(f"[!] zipalign 설치 실패: {e}")
     
     return None
+
 def install_dependencies():
     print("[*] 의존성 설치 시작...")
     print(f"[*] 서버 디렉토리: {SERVER_DIR}")
@@ -228,19 +229,16 @@ def install_dependencies():
     # ★★★ apktool 2.9.3 설치 (최신 버전) ★★★
     print("[*] apktool 2.9.3 설치 중...")
     try:
-        # 기존 apktool 삭제
         for f in TOOLS_DIR.glob("apktool*"):
             if f.is_file():
                 f.unlink()
         
         if is_linux:
-            # apktool 스크립트 다운로드
             urllib.request.urlretrieve(
                 "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool",
                 TOOLS_DIR / "apktool"
             )
             (TOOLS_DIR / "apktool").chmod(0o755)
-            # apktool 2.9.3 JAR 다운로드
             urllib.request.urlretrieve(
                 "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar",
                 TOOLS_DIR / "apktool.jar"
@@ -257,45 +255,9 @@ def install_dependencies():
         print("[+] apktool 2.9.3 설치 완료")
     except Exception as e:
         print(f"[!] apktool 설치 실패: {e}")
-    print("[*] zipalign 설치 중...")
-    try:
-        if is_linux:
-            # Linux용 zipalign 다운로드 (Android SDK)
-            urllib.request.urlretrieve(
-                "https://dl.google.com/android/repository/build-tools_r34-linux.zip",
-                TOOLS_DIR / "build-tools.zip"
-            )
-            with zipfile.ZipFile(TOOLS_DIR / "build-tools.zip", 'r') as zf:
-                zf.extractall(TOOLS_DIR)
-            (TOOLS_DIR / "build-tools.zip").unlink()
-            
-            # zipalign 찾기
-            for f in TOOLS_DIR.glob("**/zipalign"):
-                if f.is_file():
-                    shutil.move(str(f), str(TOOLS_DIR / "zipalign"))
-                    (TOOLS_DIR / "zipalign").chmod(0o755)
-                    break
-            
-        elif is_windows:
-            urllib.request.urlretrieve(
-                "https://dl.google.com/android/repository/build-tools_r34-windows.zip",
-                TOOLS_DIR / "build-tools.zip"
-            )
-            with zipfile.ZipFile(TOOLS_DIR / "build-tools.zip", 'r') as zf:
-                zf.extractall(TOOLS_DIR)
-            (TOOLS_DIR / "build-tools.zip").unlink()
-            
-            for f in TOOLS_DIR.glob("**/zipalign.exe"):
-                if f.is_file():
-                    shutil.move(str(f), str(TOOLS_DIR / "zipalign.exe"))
-                    break
-        
-        if (TOOLS_DIR / "zipalign").exists() or (TOOLS_DIR / "zipalign.exe").exists():
-            print("[+] zipalign 설치 완료")
-        else:
-            print("[!] zipalign 설치 실패. 서명 시 문제가 발생할 수 있음")
-    except Exception as e:
-        print(f"[!] zipalign 설치 실패: {e}")
+    
+    # zipalign 설치
+    _install_zipalign()
     
     # 디버그 키스토어 생성
     debug_keystore = TOOLS_DIR / "debug.keystore"
@@ -360,7 +322,7 @@ def get_tool_path(tool_name):
         return tool_path
     return None
 
-def run_cmd(cmd, cwd=None, timeout=7200):  # 기본 2시간
+def run_cmd(cmd, cwd=None, timeout=7200):
     actual_cmd = []
     for arg in cmd:
         if arg in ["apktool", "jarsigner", "apksigner"]:
@@ -448,12 +410,10 @@ def replace_in_all_files(decompile_dir, old_pkg, new_package):
             print(f"[WARN] smali 치환 실패 {smali_file}: {e}")
             return False
     
-    # smali 파일 수집
     smali_files = []
     for smali_dir in smali_dirs:
         smali_files.extend(smali_dir.rglob("*.smali"))
     
-    # 병렬 처리
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         executor.map(process_smali_file, smali_files)
     
@@ -477,54 +437,109 @@ def replace_in_all_files(decompile_dir, old_pkg, new_package):
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             executor.map(process_xml_file, xml_files)
 
+def update_apktool_yml(decompile_dir, old_pkg, new_package):
+    """apktool.yml 업데이트 (YAML 구조 유지)"""
+    yml_path = decompile_dir / "apktool.yml"
+    if not yml_path.exists():
+        return
+    
+    with open(yml_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # doNotCompress 처리
+    if 'doNotCompress:' in content:
+        if 'resources.arsc' not in content:
+            # 기존 항목 뒤에 추가
+            lines = content.split('\n')
+            new_lines = []
+            for line in lines:
+                new_lines.append(line)
+                if line.strip() == 'doNotCompress:':
+                    # 다음 줄부터 들여쓰기 확인
+                    indent = ''
+                    for char in line:
+                        if char == ' ':
+                            indent += ' '
+                        else:
+                            break
+                    new_lines.append(f'{indent}  - resources.arsc')
+            content = '\n'.join(new_lines)
+    else:
+        content += '\ndoNotCompress:\n  - resources.arsc\n'
+    
+    # renameManifestPackage 업데이트
+    if 'renameManifestPackage:' in content:
+        content = re.sub(
+            r'renameManifestPackage:\s*.*',
+            f'renameManifestPackage: {new_package}',
+            content
+        )
+    else:
+        content += f'\nrenameManifestPackage: {new_package}\n'
+    
+    with open(yml_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("[+] apktool.yml 업데이트 완료")
+
+def fix_resources_arsc(apk_path):
+    """
+    resources.arsc를 STORED (압축 해제) 방식으로 변환
+    Android 11+에서 필수
+    """
+    if not apk_path.exists():
+        return False
+    
+    try:
+        temp_path = apk_path.with_suffix(".fixed.apk")
+        
+        with zipfile.ZipFile(apk_path, 'r') as zin:
+            with zipfile.ZipFile(temp_path, 'w') as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    
+                    if item.filename == "resources.arsc":
+                        # STORED로 다시 쓰기 (압축 해제)
+                        info = zipfile.ZipInfo(item.filename)
+                        info.date_time = item.date_time
+                        info.compress_type = zipfile.ZIP_STORED
+                        info.external_attr = item.external_attr
+                        info.create_system = item.create_system
+                        zout.writestr(info, data)
+                        print(f"[+] resources.arsc를 STORED로 변환 (압축 해제)")
+                    else:
+                        zout.writestr(item, data)
+        
+        # 원본을 수정된 파일로 교체
+        shutil.move(temp_path, apk_path)
+        return True
+        
+    except Exception as e:
+        print(f"[!] resources.arsc 수정 실패: {e}")
+        if temp_path.exists():
+            temp_path.unlink()
+        return False
+
 # ========== 백그라운드 리빌드 작업 ==========
 def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
-    """백그라운드에서 리빌드 실행 (resources.arsc 압축 해제)"""
+    """백그라운드에서 리빌드 실행 (resources.arsc 완전 수정)"""
     try:
         job_status[job_id] = {"status": "processing", "progress": 10}
         
         # 1. 패키지명 치환 (병렬)
         job_status[job_id]["progress"] = 20
         replace_in_all_files(decompile_dir, old_pkg, new_package)
+        job_status[job_id]["progress"] = 35
+        
+        # 2. apktool.yml 업데이트
+        update_apktool_yml(decompile_dir, old_pkg, new_package)
         job_status[job_id]["progress"] = 40
         
-        # ★★★ 1.5. apktool.yml 수정 (resources.arsc 압축 방지) ★★★
-        yml_path = decompile_dir / "apktool.yml"
-        if yml_path.exists():
-            with open(yml_path, 'r', encoding='utf-8') as f:
-                yml_content = f.read()
-            
-            # doNotCompress에 resources.arsc 추가
-            if 'doNotCompress:' in yml_content:
-                if 'resources.arsc' not in yml_content:
-                    yml_content = yml_content.replace(
-                        'doNotCompress:',
-                        'doNotCompress:\n  - resources.arsc'
-                    )
-            else:
-                yml_content += '\ndoNotCompress:\n  - resources.arsc\n'
-            
-            # renameManifestPackage 업데이트
-            if 'renameManifestPackage:' in yml_content:
-                yml_content = re.sub(
-                    r'renameManifestPackage:\s*.*',
-                    f'renameManifestPackage: {new_package}',
-                    yml_content
-                )
-            else:
-                yml_content += f'\nrenameManifestPackage: {new_package}\n'
-            
-            with open(yml_path, 'w', encoding='utf-8') as f:
-                f.write(yml_content)
-            print("[+] apktool.yml 업데이트 완료 (doNotCompress + renameManifestPackage)")
-        
-        # 2. apktool 리빌드
+        # 3. apktool 리빌드
         repack_dir = decompile_dir.parent / "repacked"
         repack_dir.mkdir(exist_ok=True)
         
-        job_status[job_id]["progress"] = 50
+        job_status[job_id]["progress"] = 45
         
-        # JVM 메모리 제한
         env = os.environ.copy()
         env["_JAVA_OPTIONS"] = "-Xmx256m -Xms64m -XX:+UseSerialGC"
         
@@ -534,35 +549,12 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         unsigned_apk = repack_dir / "unsigned.apk"
         
-        # apktool 빌드 명령 (--no-auto-rename 제거)
-        try:
-            stdout, _ = run_cmd(["apktool", "--version"], timeout=10)
-            apktool_version = stdout.strip()
-            print(f"[*] apktool 버전: {apktool_version}")
-            
-            # --no-auto-rename 제거하여 패키지명 변경 유지
-            if apktool_version >= "2.6.0":
-                cmd = [
-                    str(apktool_path), "b",
-                    "--no-debug",
-                    str(decompile_dir),
-                    "-o", str(unsigned_apk)
-                ]
-            else:
-                cmd = [
-                    str(apktool_path), "b",
-                    "--no-debug",
-                    str(decompile_dir),
-                    "-o", str(unsigned_apk)
-                ]
-        except:
-            # 버전 확인 실패 시 기본 옵션
-            cmd = [
-                str(apktool_path), "b",
-                "--no-debug",
-                str(decompile_dir),
-                "-o", str(unsigned_apk)
-            ]
+        cmd = [
+            str(apktool_path), "b",
+            "--no-debug",
+            str(decompile_dir),
+            "-o", str(unsigned_apk)
+        ]
         
         print(f"[CMD] {' '.join(cmd)}")
         print(f"[JVM] {env.get('_JAVA_OPTIONS', '')}")
@@ -572,9 +564,15 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             raise RuntimeError(f"apktool 리빌드 실패: {proc.stderr}")
         
         print("[+] apktool 리빌드 완료")
-        job_status[job_id]["progress"] = 60
+        job_status[job_id]["progress"] = 55
         
-        # ★★★ 3. zipalign 실행 (4바이트 정렬) ★★★
+        # ★★★ 4. resources.arsc를 STORED로 변환 (핵심) ★★★
+        print("[*] resources.arsc를 STORED로 변환 중...")
+        if not fix_resources_arsc(unsigned_apk):
+            print("[!] resources.arsc 변환 실패, 계속 진행")
+        job_status[job_id]["progress"] = 65
+        
+        # ★★★ 5. zipalign 실행 (4바이트 정렬) ★★★
         aligned_apk = repack_dir / "aligned.apk"
         zipalign_path = get_tool_path("zipalign")
         
@@ -598,12 +596,24 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 print(f"[WARN] zipalign 실패: {proc.stderr}")
                 shutil.copy(unsigned_apk, aligned_apk)
         else:
-            print("[!] zipalign 없음, unsigned 복사")
+            print("[!] zipalign 없음, unsigned 사용")
             shutil.copy(unsigned_apk, aligned_apk)
         
-        job_status[job_id]["progress"] = 70
+        job_status[job_id]["progress"] = 80
         
-        # 4. 서명 (v1+v2+v3)
+        # ★★★ 6. resources.arsc 검증 ★★★
+        try:
+            with zipfile.ZipFile(aligned_apk, 'r') as z:
+                info = z.getinfo("resources.arsc")
+                print(f"[*] resources.arsc compress_type: {info.compress_type}")
+                if info.compress_type == 0:
+                    print("[+] resources.arsc가 STORED(압축 해제) 상태입니다.")
+                else:
+                    print(f"[!] resources.arsc가 압축됨 (compress_type={info.compress_type})")
+        except Exception as e:
+            print(f"[!] resources.arsc 검증 실패: {e}")
+        
+        # 7. 서명 (v1+v2+v3)
         signed_apk = repack_dir / "signed.apk"
         signed = False
         
@@ -613,7 +623,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                 env = os.environ.copy()
                 env["_JAVA_OPTIONS"] = "-Xmx128m"
                 
-                # 먼저 v1+v2+v3 시도
                 cmd = [
                     apksigner, "sign",
                     "--debug-key",
@@ -630,8 +639,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
                     print("[+] apksigner 서명 완료 (v1+v2+v3)")
                 else:
                     print(f"[!] apksigner v1+v2+v3 서명 실패: {proc.stderr}")
-                    
-                    # v1 only로 재시도
                     cmd = [
                         apksigner, "sign",
                         "--debug-key",
@@ -683,7 +690,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
             print("[!] 서명 도구 없음. 서명되지 않은 APK 생성")
             shutil.copy(aligned_apk, signed_apk)
         
-        # 5. 다운로드 준비
+        # 8. 다운로드 준비
         download_dir = BASE_DIR / "downloads"
         download_dir.mkdir(exist_ok=True)
         final_apk = download_dir / f"{job_id}_signed.apk"
@@ -704,6 +711,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print(f"[!] 리빌드 실패 {job_id}: {e}")
         import traceback
         traceback.print_exc()
+
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
 def upload_apk():
@@ -721,7 +729,6 @@ def upload_apk():
     orig_path = job_dir / "original.apk"
     file.save(orig_path)
 
-    # XAPK 처리
     if file.filename.endswith('.xapk'):
         with zipfile.ZipFile(orig_path, 'r') as zf:
             apk_list = [f for f in zf.namelist() if f.endswith('.apk')]
@@ -734,7 +741,6 @@ def upload_apk():
     else:
         apk_path = orig_path
 
-    # apktool 디컴파일
     decompile_dir = job_dir / "decompiled"
     try:
         run_cmd(["apktool", "d", "-f", "-o", str(decompile_dir), str(apk_path)], timeout=1800)
@@ -742,7 +748,6 @@ def upload_apk():
     except Exception as e:
         return jsonify({"error": f"apktool 디코딩 실패: {str(e)}"}), 500
 
-    # 패키지명 추출
     manifest_path = decompile_dir / "AndroidManifest.xml"
     old_pkg = extract_package_name(manifest_path)
     
@@ -775,7 +780,6 @@ def rebuild_apk(job_id):
     if not new_package:
         return jsonify({"error": "새 패키지명 필요"}), 400
     
-    # meta.json에서 원본 패키지명 읽기
     meta_path = job_dir / "meta.json"
     if not meta_path.exists():
         return jsonify({"error": "메타데이터 없음. 먼저 APK를 업로드하세요."}), 400
@@ -793,10 +797,8 @@ def rebuild_apk(job_id):
 
     print(f"[*] 백그라운드 리빌드 시작: {job_id} ({old_pkg} → {new_package})")
     
-    # 작업 상태 초기화
     job_status[job_id] = {"status": "processing", "progress": 0, "result": {}}
     
-    # 백그라운드 스레드에서 실행
     thread = threading.Thread(
         target=rebuild_async,
         args=(job_id, new_package, old_pkg, decompile_dir)
@@ -812,7 +814,6 @@ def rebuild_apk(job_id):
 
 @app.route('/api/status/<job_id>', methods=['GET'])
 def get_status(job_id):
-    """작업 상태 조회"""
     if job_id not in job_status:
         return jsonify({"error": "작업 없음"}), 404
     
