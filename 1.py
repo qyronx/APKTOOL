@@ -526,21 +526,13 @@ def upload_apk():
         run_cmd([
             "jadx",
             "-d", str(java_dir),
-    
-            "--show-bad-code",
+        
+            "--threads-count", "2",
+            "--no-res",
             "--deobf",
-            "--deobf-min", "1",
-            "--deobf-max", "64",
-            "--export-gradle",
-    
-            "--threads-count", str(os.cpu_count()),
-    
+        
             str(apk_path)
         ], timeout=3600)
-    
-        java_files = list(java_dir.rglob("*.java"))
-    
-        print(f"[+] Java 파일 {len(java_files)}개 생성")
     
     except Exception as e:
         print(f"[WARN] jadx 실패 : {e}")
