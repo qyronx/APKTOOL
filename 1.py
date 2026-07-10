@@ -1,4 +1,4 @@
-# server.py - APKWorkshop NullByte (패키지명 변경 전용 - keytool 없음 해결)
+# server.py - APKWorkshop NullByte (패키지명 변경 전용 - 비동기 처리 + 최적화)
 # 실행: python server.py (포트 10000)
 
 import os
@@ -13,12 +13,17 @@ import urllib.request
 import tarfile
 import re
 import stat
+import threading
+import time
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file, abort, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
+
+# ========== 작업 상태 저장 ==========
+job_status = {}  # job_id -> {"status": "processing"|"done"|"failed", "result": {}, "progress": 0}
 
 # ========== 경로 설정 ==========
 SERVER_DIR = Path(__file__).parent.absolute()
@@ -206,12 +211,10 @@ def install_dependencies():
     else:
         print("[*] apktool 이미 설치됨")
     
-    # ★★★ 디버그 키스토어 생성 (keytool 없이 apksigner 사용) ★★★
+    # 디버그 키스토어 생성
     debug_keystore = TOOLS_DIR / "debug.keystore"
     if not debug_keystore.exists():
         print("[*] 디버그 키스토어 생성 중...")
-        
-        # 방법 1: keytool 시도
         keytool_path = shutil.which("keytool")
         if keytool_path:
             try:
@@ -231,77 +234,29 @@ def install_dependencies():
             except Exception as e:
                 print(f"[!] keytool 실패: {e}")
         
-        # 방법 2: keytool 실패 시 apksigner로 더미 키 생성
         if not debug_keystore.exists():
             apksigner = shutil.which("apksigner")
             if apksigner:
                 try:
-                    # 더미 APK 생성 후 apksigner --debug-key로 서명하면 키스토어가 자동 생성됨
                     dummy_apk = TOOLS_DIR / "dummy.apk"
-                    # 빈 더미 파일 생성 (실제 APK는 아니지만 서명 테스트용)
                     with open(dummy_apk, 'wb') as f:
-                        f.write(b'PK\x03\x04')  # ZIP 헤더
-                    
+                        f.write(b'PK\x03\x04')
                     subprocess.run([
                         apksigner, "sign",
                         "--debug-key",
                         "--out", str(TOOLS_DIR / "dummy_signed.apk"),
                         str(dummy_apk)
                     ], check=False, timeout=10)
-                    
-                    # apksigner가 생성한 키스토어 찾기 (보통 ~/.android/debug.keystore)
                     home_keystore = Path.home() / ".android" / "debug.keystore"
                     if home_keystore.exists():
                         shutil.copy(home_keystore, debug_keystore)
-                        print(f"[+] 디버그 키스토어 복사 완료 (apksigner): {debug_keystore}")
-                    
-                    # 임시 파일 정리
+                        print(f"[+] 디버그 키스토어 복사 완료 (apksigner)")
                     if dummy_apk.exists():
                         dummy_apk.unlink()
                     if (TOOLS_DIR / "dummy_signed.apk").exists():
                         (TOOLS_DIR / "dummy_signed.apk").unlink()
-                        
                 except Exception as e:
                     print(f"[!] apksigner 디버그 키 생성 실패: {e}")
-        
-        # 방법 3: 자체 생성 (최후의 수단)
-        if not debug_keystore.exists():
-            print("[!] keytool과 apksigner 모두 없음. 기본 디버그 키 생성 시도...")
-            try:
-                # openssl로 자체 서명 키 생성 (Linux)
-                if is_linux:
-                    openssl = shutil.which("openssl")
-                    if openssl:
-                        # PKCS12 키스토어 생성
-                        subprocess.run([
-                            openssl, "genrsa", "-out", str(TOOLS_DIR / "debug.key"), "2048"
-                        ], check=False)
-                        subprocess.run([
-                            openssl, "req", "-new", "-x509", "-key", str(TOOLS_DIR / "debug.key"),
-                            "-out", str(TOOLS_DIR / "debug.crt"),
-                            "-subj", "/CN=Android Debug/O=Android/C=US",
-                            "-days", "10000"
-                        ], check=False)
-                        # keytool로 PKCS12 변환 (keytool이 있으면)
-                        if keytool_path:
-                            subprocess.run([
-                                keytool_path, "-import", "-v",
-                                "-keystore", str(debug_keystore),
-                                "-storepass", "android",
-                                "-keypass", "android",
-                                "-alias", "androiddebugkey",
-                                "-file", str(TOOLS_DIR / "debug.crt"),
-                                "-noprompt"
-                            ], check=False)
-                            if debug_keystore.exists():
-                                print("[+] 디버그 키스토어 생성 완료 (openssl)")
-                        
-                        # 임시 파일 정리
-                        for f in [TOOLS_DIR / "debug.key", TOOLS_DIR / "debug.crt"]:
-                            if f.exists():
-                                f.unlink()
-            except Exception as e:
-                print(f"[!] openssl 키 생성 실패: {e}")
         
         if debug_keystore.exists():
             print("[+] 디버그 키스토어 생성 완료")
@@ -314,14 +269,12 @@ def install_dependencies():
 def get_tool_path(tool_name):
     if shutil.which(tool_name):
         return Path(shutil.which(tool_name))
-    
     tool_path = TOOLS_DIR / tool_name
     if tool_path.exists():
         return tool_path
-    
     return None
 
-def run_cmd(cmd, cwd=None, timeout=300):
+def run_cmd(cmd, cwd=None, timeout=7200):  # 기본 2시간
     actual_cmd = []
     for arg in cmd:
         if arg in ["apktool", "jarsigner", "apksigner"]:
@@ -361,9 +314,10 @@ def cleanup_job(job_id):
     job_dir = get_job_dir(job_id)
     if job_dir.exists():
         shutil.rmtree(job_dir, ignore_errors=True)
+    if job_id in job_status:
+        del job_status[job_id]
 
 def extract_package_name(manifest_path):
-    """AndroidManifest.xml에서 패키지명 추출"""
     try:
         with open(manifest_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -373,6 +327,152 @@ def extract_package_name(manifest_path):
     except:
         pass
     return None
+
+def replace_in_all_files(decompile_dir, old_pkg, new_pkg):
+    """모든 파일에서 패키지명 치환 (병렬 처리)"""
+    import concurrent.futures
+    import threading
+    
+    old_path = old_pkg.replace('.', '/')
+    new_path = new_pkg.replace('.', '/')
+    
+    # 1. AndroidManifest.xml 먼저 처리
+    manifest_path = decompile_dir / "AndroidManifest.xml"
+    if manifest_path.exists():
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = f.read()
+        manifest = re.sub(r'package="[^"]*"', f'package="{new_pkg}"', manifest)
+        manifest = manifest.replace(old_pkg, new_pkg)
+        with open(manifest_path, 'w', encoding='utf-8') as f:
+            f.write(manifest)
+    
+    # 2. smali 파일들 병렬 처리
+    smali_dirs = [d for d in decompile_dir.iterdir() if d.is_dir() and d.name.startswith("smali")]
+    
+    def process_smali_file(smali_file):
+        try:
+            with open(smali_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            content = content.replace(f'L{old_path}/', f'L{new_path}/')
+            content = content.replace(f'L{old_pkg}/R$', f'L{new_pkg}/R$')
+            content = content.replace(old_pkg, new_pkg)
+            with open(smali_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            print(f"[WARN] smali 치환 실패 {smali_file}: {e}")
+            return False
+    
+    # smali 파일 수집
+    smali_files = []
+    for smali_dir in smali_dirs:
+        smali_files.extend(smali_dir.rglob("*.smali"))
+    
+    # 병렬 처리
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        executor.map(process_smali_file, smali_files)
+    
+    # 3. XML 리소스 파일 병렬 처리
+    res_dir = decompile_dir / "res"
+    if res_dir.exists():
+        xml_files = list(res_dir.rglob("*.xml"))
+        
+        def process_xml_file(xml_file):
+            try:
+                with open(xml_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                content = content.replace(old_pkg, new_pkg)
+                with open(xml_file, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                return True
+            except Exception as e:
+                print(f"[WARN] XML 치환 실패 {xml_file}: {e}")
+                return False
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            executor.map(process_xml_file, xml_files)
+
+# ========== 백그라운드 리빌드 작업 ==========
+def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
+    """백그라운드에서 리빌드 실행"""
+    try:
+        job_status[job_id] = {"status": "processing", "progress": 10}
+        
+        # 1. 패키지명 치환 (병렬)
+        job_status[job_id]["progress"] = 20
+        replace_in_all_files(decompile_dir, old_pkg, new_pkg)
+        job_status[job_id]["progress"] = 40
+        
+        # 2. 리빌드
+        repack_dir = decompile_dir.parent / "repacked"
+        repack_dir.mkdir(exist_ok=True)
+        
+        job_status[job_id]["progress"] = 50
+        run_cmd(["apktool", "b", "-j", "4", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")], timeout=7200)
+        job_status[job_id]["progress"] = 70
+        
+        # 3. 서명
+        unsigned_apk = repack_dir / "unsigned.apk"
+        signed_apk = repack_dir / "signed.apk"
+        signed = False
+        
+        apksigner = shutil.which("apksigner")
+        if apksigner:
+            try:
+                run_cmd([
+                    apksigner, "sign",
+                    "--debug-key",
+                    "--out", str(signed_apk),
+                    str(unsigned_apk)
+                ], timeout=300)
+                signed = True
+                print("[+] apksigner 서명 완료")
+            except Exception as e:
+                print(f"[!] apksigner 서명 실패: {e}")
+        
+        if not signed:
+            jarsigner = shutil.which("jarsigner")
+            debug_keystore = TOOLS_DIR / "debug.keystore"
+            if jarsigner and debug_keystore.exists():
+                try:
+                    run_cmd([
+                        jarsigner, "-verbose",
+                        "-sigalg", "SHA1withRSA",
+                        "-digestalg", "SHA1",
+                        "-keystore", str(debug_keystore),
+                        "-storepass", "android",
+                        "-keypass", "android",
+                        str(unsigned_apk), "androiddebugkey"
+                    ], timeout=300)
+                    shutil.copy(unsigned_apk, signed_apk)
+                    signed = True
+                    print("[+] jarsigner 서명 완료")
+                except Exception as e:
+                    print(f"[!] jarsigner 서명 실패: {e}")
+        
+        if not signed:
+            print("[!] 서명 도구 없음. 서명되지 않은 APK 생성")
+            shutil.copy(unsigned_apk, signed_apk)
+        
+        # 4. 다운로드 준비
+        download_dir = BASE_DIR / "downloads"
+        download_dir.mkdir(exist_ok=True)
+        final_apk = download_dir / f"{job_id}_signed.apk"
+        shutil.copy(signed_apk, final_apk)
+        
+        job_status[job_id]["progress"] = 100
+        job_status[job_id]["status"] = "done"
+        job_status[job_id]["result"] = {
+            "message": f"리빌드 완료: {old_pkg} → {new_package}",
+            "download_url": f"/api/download/{job_id}",
+            "signed": signed
+        }
+        print(f"[+] 리빌드 완료: {job_id}")
+        
+    except Exception as e:
+        job_status[job_id]["status"] = "failed"
+        job_status[job_id]["result"] = {"error": str(e)}
+        print(f"[!] 리빌드 실패 {job_id}: {e}")
 
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
@@ -404,13 +504,12 @@ def upload_apk():
     else:
         apk_path = orig_path
 
-    # apktool 디컴파일 (리소스 + smali)
+    # apktool 디컴파일
     decompile_dir = job_dir / "decompiled"
     try:
-        run_cmd(["apktool", "d", "-f", "-o", str(decompile_dir), str(apk_path)])
+        run_cmd(["apktool", "d", "-f", "-o", str(decompile_dir), str(apk_path)], timeout=1800)
         print(f"[+] apktool 디코딩 완료: {decompile_dir}")
     except Exception as e:
-        cleanup_job(job_id)
         return jsonify({"error": f"apktool 디코딩 실패: {str(e)}"}), 500
 
     # 패키지명 추출
@@ -418,7 +517,6 @@ def upload_apk():
     old_pkg = extract_package_name(manifest_path)
     
     if not old_pkg:
-        cleanup_job(job_id)
         return jsonify({"error": "패키지명을 찾을 수 없음"}), 400
 
     meta = {
@@ -463,138 +561,37 @@ def rebuild_apk(job_id):
     if not decompile_dir.exists():
         return jsonify({"error": "디컴파일 디렉토리 없음"}), 404
 
-    print(f"[*] 패키지명 변경: {old_pkg} → {new_package}")
-
-    # 1. AndroidManifest.xml 패키지명 변경
-    manifest_path = decompile_dir / "AndroidManifest.xml"
-    if manifest_path.exists():
-        with open(manifest_path, 'r', encoding='utf-8') as f:
-            manifest = f.read()
-        manifest = re.sub(r'package="[^"]*"', f'package="{new_package}"', manifest)
-        manifest = manifest.replace(old_pkg, new_package)
-        with open(manifest_path, 'w', encoding='utf-8') as f:
-            f.write(manifest)
-
-    old_path = old_pkg.replace('.', '/')
-    new_path = new_package.replace('.', '/')
-
-    # 2. 모든 smali 디렉토리 처리
-    smali_dirs = [d for d in decompile_dir.iterdir() if d.is_dir() and d.name.startswith("smali")]
-    for smali_dir in smali_dirs:
-        for smali_file in smali_dir.rglob("*.smali"):
-            try:
-                with open(smali_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                content = content.replace(f'L{old_path}/', f'L{new_path}/')
-                content = content.replace(f'L{old_pkg}/R$', f'L{new_package}/R$')
-                content = content.replace(old_pkg, new_package)
-                
-                with open(smali_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
-            except Exception as e:
-                print(f"[WARN] smali 치환 실패 {smali_file}: {e}")
-
-    # 3. 모든 XML 리소스 파일 처리
-    res_dir = decompile_dir / "res"
-    if res_dir.exists():
-        for xml_file in res_dir.rglob("*.xml"):
-            try:
-                with open(xml_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                content = content.replace(old_pkg, new_package)
-                with open(xml_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
-            except Exception as e:
-                print(f"[WARN] XML 치환 실패 {xml_file}: {e}")
-
-    # 4. 리빌드
-    repack_dir = job_dir / "repacked"
-    repack_dir.mkdir(exist_ok=True)
-    try:
-        run_cmd(["apktool", "b", str(decompile_dir), "-o", str(repack_dir / "unsigned.apk")])
-    except Exception as e:
-        return jsonify({"error": f"리빌드 실패: {str(e)}"}), 500
-
-    # 5. ★★★ 서명 (keytool 없이도 동작) ★★★
-    signed_apk = repack_dir / "signed.apk"
-    unsigned_apk = repack_dir / "unsigned.apk"
+    print(f"[*] 백그라운드 리빌드 시작: {job_id} ({old_pkg} → {new_package})")
     
-    signed = False
+    # 작업 상태 초기화
+    job_status[job_id] = {"status": "processing", "progress": 0, "result": {}}
     
-    # 방법 1: apksigner (우선 - --debug-key로 자체 서명)
-    apksigner = shutil.which("apksigner")
-    if apksigner:
-        try:
-            print("[*] apksigner로 서명 시도...")
-            run_cmd([
-                apksigner, "sign",
-                "--debug-key",  # ★ keytool 없이 자체 디버그 키 사용
-                "--out", str(signed_apk),
-                str(unsigned_apk)
-            ], timeout=60)
-            signed = True
-            print("[+] apksigner 서명 완료")
-        except Exception as e:
-            print(f"[!] apksigner 서명 실패: {e}")
-    
-    # 방법 2: jarsigner (apksigner 실패 시)
-    if not signed:
-        jarsigner = shutil.which("jarsigner")
-        debug_keystore = TOOLS_DIR / "debug.keystore"
-        
-        # 키스토어가 없으면 생성 시도
-        if not debug_keystore.exists():
-            keytool = shutil.which("keytool")
-            if keytool:
-                try:
-                    subprocess.run([
-                        keytool, "-genkey", "-v",
-                        "-keystore", str(debug_keystore),
-                        "-alias", "androiddebugkey",
-                        "-keyalg", "RSA",
-                        "-keysize", "2048",
-                        "-validity", "10000",
-                        "-storepass", "android",
-                        "-keypass", "android",
-                        "-dname", "CN=Android Debug, O=Android, C=US"
-                    ], check=False, timeout=30)
-                except:
-                    pass
-        
-        if jarsigner and debug_keystore.exists():
-            try:
-                print("[*] jarsigner로 서명 시도...")
-                run_cmd([
-                    jarsigner, "-verbose",
-                    "-sigalg", "SHA1withRSA",
-                    "-digestalg", "SHA1",
-                    "-keystore", str(debug_keystore),
-                    "-storepass", "android",
-                    "-keypass", "android",
-                    str(unsigned_apk), "androiddebugkey"
-                ], timeout=60)
-                shutil.copy(unsigned_apk, signed_apk)
-                signed = True
-                print("[+] jarsigner 서명 완료")
-            except Exception as e:
-                print(f"[!] jarsigner 서명 실패: {e}")
-    
-    # 방법 3: 서명 없이 (최후의 수단)
-    if not signed:
-        print("[!] 서명 도구 없음. 서명되지 않은 APK 생성 (설치 불가능)")
-        shutil.copy(unsigned_apk, signed_apk)
-
-    # 6. 다운로드 준비
-    download_dir = BASE_DIR / "downloads"
-    download_dir.mkdir(exist_ok=True)
-    final_apk = download_dir / f"{job_id}_signed.apk"
-    shutil.copy(signed_apk, final_apk)
+    # 백그라운드 스레드에서 실행
+    thread = threading.Thread(
+        target=rebuild_async,
+        args=(job_id, new_package, old_pkg, decompile_dir)
+    )
+    thread.daemon = True
+    thread.start()
 
     return jsonify({
-        "message": f"리빌드 완료: {old_pkg} → {new_package}",
-        "download_url": f"/api/download/{job_id}",
-        "signed": signed
+        "message": "리빌드 시작됨 (백그라운드 처리)",
+        "job_id": job_id,
+        "status_url": f"/api/status/{job_id}"
+    })
+
+@app.route('/api/status/<job_id>', methods=['GET'])
+def get_status(job_id):
+    """작업 상태 조회"""
+    if job_id not in job_status:
+        return jsonify({"error": "작업 없음"}), 404
+    
+    status = job_status[job_id]
+    return jsonify({
+        "job_id": job_id,
+        "status": status["status"],
+        "progress": status.get("progress", 0),
+        "result": status.get("result", {})
     })
 
 @app.route('/api/download/<job_id>', methods=['GET'])
