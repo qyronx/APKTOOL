@@ -478,7 +478,70 @@ def update_apktool_yml(decompile_dir, old_pkg, new_package):
     with open(yml_path, 'w', encoding='utf-8') as f:
         f.write(content)
     print("[+] apktool.yml 업데이트 완료")
-
+def fix_resources_arsc_force(apk_path):
+    """
+    resources.arsc를 강제로 STORED로 변환 (압축 해제)
+    전체 파일을 다시 쓰지 않고 resources.arsc만 교체
+    """
+    if not apk_path.exists():
+        return False
+    
+    try:
+        import tempfile
+        import shutil
+        
+        # 1. 현재 상태 확인
+        with zipfile.ZipFile(apk_path, 'r') as zf:
+            info = zf.getinfo("resources.arsc")
+            current_type = info.compress_type
+            print(f"[*] 현재 resources.arsc compress_type: {current_type} (0=STORED, 8=DEFLATED)")
+            
+            if current_type == 0:
+                print("[*] 이미 STORED 상태, 변환 생략")
+                return True
+            
+            arsc_data = zf.read("resources.arsc")
+        
+        # 2. 임시 파일 생성
+        temp_path = apk_path.with_suffix(".fixed.apk")
+        
+        with zipfile.ZipFile(apk_path, 'r') as zin:
+            with zipfile.ZipFile(temp_path, 'w', compression=zipfile.ZIP_STORED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    
+                    if item.filename == "resources.arsc":
+                        # STORED로 다시 쓰기
+                        info = zipfile.ZipInfo(item.filename)
+                        info.date_time = item.date_time
+                        info.compress_type = zipfile.ZIP_STORED
+                        info.external_attr = item.external_attr
+                        info.create_system = item.create_system
+                        zout.writestr(info, data)
+                        print(f"[+] resources.arsc를 STORED로 변환 (compress_type: 0)")
+                    else:
+                        # 다른 파일은 그대로 복사
+                        zout.writestr(item, data)
+        
+        # 3. 원본 교체
+        shutil.move(temp_path, apk_path)
+        
+        # 4. 변환 후 검증
+        with zipfile.ZipFile(apk_path, 'r') as zf:
+            info = zf.getinfo("resources.arsc")
+            print(f"[*] 변환 후 resources.arsc compress_type: {info.compress_type}")
+            if info.compress_type == 0:
+                print("[+] resources.arsc STORED 확인 완료")
+                return True
+            else:
+                print(f"[!] resources.arsc가 여전히 압축됨 (compress_type={info.compress_type})")
+                return False
+        
+    except Exception as e:
+        print(f"[!] resources.arsc 강제 변환 실패: {e}")
+        if temp_path.exists():
+            temp_path.unlink()
+        return False
 def fix_resources_arsc_fast(apk_path):
     """
     resources.arsc만 STORED로 변환 (ZIP_STORED)
@@ -524,7 +587,7 @@ def fix_resources_arsc_fast(apk_path):
 
 # ========== 백그라운드 리빌드 작업 ==========
 def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
-    """백그라운드에서 리빌드 실행 (최적화)"""
+    """백그라운드에서 리빌드 실행 (resources.arsc 강제 변환)"""
     try:
         job_status[job_id] = {"status": "processing", "progress": 10}
         
@@ -569,9 +632,30 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print("[+] apktool 리빌드 완료")
         job_status[job_id]["progress"] = 55
         
-        # ★★★ 4. resources.arsc를 STORED로 변환 (빠른 버전) ★★★
-        print("[*] resources.arsc를 STORED로 변환 중...")
-        fix_resources_arsc_fast(unsigned_apk)
+        # ★★★ 4. resources.arsc를 STORED로 강제 변환 (검증 포함) ★★★
+        print("[*] resources.arsc를 STORED로 강제 변환 중...")
+        
+        # 4-1. 강제 변환 실행
+        success = fix_resources_arsc_force(unsigned_apk)
+        if not success:
+            print("[!] resources.arsc 변환 실패, 한 번 더 시도...")
+            # 재시도
+            success = fix_resources_arsc_force(unsigned_apk)
+        
+        # 4-2. 변환 후 검증
+        try:
+            with zipfile.ZipFile(unsigned_apk, 'r') as z:
+                info = z.getinfo("resources.arsc")
+                print(f"[*] 최종 resources.arsc compress_type: {info.compress_type}")
+                if info.compress_type != 0:
+                    print(f"[!] resources.arsc가 여전히 압축됨 (compress_type={info.compress_type})")
+                    # 한 번 더 강제 시도
+                    fix_resources_arsc_force(unsigned_apk)
+                else:
+                    print("[+] resources.arsc STORED 확인 완료")
+        except Exception as e:
+            print(f"[!] resources.arsc 검증 실패: {e}")
+        
         job_status[job_id]["progress"] = 65
         
         # ★★★ 5. zipalign 실행 ★★★
@@ -603,7 +687,7 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         
         job_status[job_id]["progress"] = 80
         
-        # 6. 서명 (v1+v2+v3)
+        # 6. 서명 (v1+v2+v3) - 기존 코드 유지
         signed_apk = repack_dir / "signed.apk"
         signed = False
         
@@ -701,7 +785,6 @@ def rebuild_async(job_id, new_package, old_pkg, decompile_dir):
         print(f"[!] 리빌드 실패 {job_id}: {e}")
         import traceback
         traceback.print_exc()
-
 # ========== API 엔드포인트 ==========
 @app.route('/api/upload', methods=['POST'])
 def upload_apk():
