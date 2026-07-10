@@ -237,6 +237,7 @@ def install_dependencies():
     is_linux = system == 'linux'
     is_mac = system == 'darwin'
 
+    # apktool 설치 (기존과 동일)
     if not is_tool_installed("apktool"):
         print("[*] apktool 다운로드 중...")
         try:
@@ -265,6 +266,7 @@ def install_dependencies():
     else:
         print("[*] apktool 이미 설치됨")
 
+    # ★★★ jadx 설치 수정 ★★★
     if not is_tool_installed("jadx"):
         print("[*] jadx 다운로드 중...")
         try:
@@ -273,21 +275,35 @@ def install_dependencies():
                 "https://github.com/skylot/jadx/releases/download/v1.4.7/jadx-1.4.7.zip",
                 zip_path
             )
+            
+            # jadx 전용 디렉토리에 압축 해제
+            jadx_dir = TOOLS_DIR / "jadx"
+            jadx_dir.mkdir(exist_ok=True)
+            
             with zipfile.ZipFile(zip_path, 'r') as zf:
-                zf.extractall(TOOLS_DIR)
+                zf.extractall(jadx_dir)
             zip_path.unlink()
+            
+            # 실행 권한 설정
             if is_linux or is_mac:
-                jadx_dir = TOOLS_DIR / "jadx"
-                if jadx_dir.exists():
-                    for f in jadx_dir.rglob("*"):
-                        if f.name.endswith((".sh", "")) and not f.suffix:
+                bin_dir = jadx_dir / "bin"
+                if bin_dir.exists():
+                    for f in bin_dir.iterdir():
+                        if f.is_file():
                             f.chmod(0o755)
+            
+            # PATH에 jadx/bin 추가
+            jadx_bin = TOOLS_DIR / "jadx" / "bin"
+            if jadx_bin.exists():
+                os.environ["PATH"] = str(jadx_bin) + os.pathsep + os.environ.get("PATH", "")
+            
             print("[+] jadx 설치 완료")
         except Exception as e:
             print(f"[!] jadx 설치 실패: {e}")
     else:
         print("[*] jadx 이미 설치됨")
 
+    # Windows SDK 도구 (기존과 동일)
     if is_windows:
         tools_to_download = {
             "aapt2": "https://dl.google.com/android/repository/aapt2-windows-8.0.0-10154469.zip",
@@ -311,11 +327,13 @@ def install_dependencies():
             else:
                 print(f"[*] {tool_name} 이미 설치됨")
     
+    # PATH 업데이트
     os.environ["PATH"] = str(TOOLS_DIR) + os.pathsep + os.environ.get("PATH", "")
     jadx_bin = TOOLS_DIR / "jadx" / "bin"
     if jadx_bin.exists():
         os.environ["PATH"] = str(jadx_bin) + os.pathsep + os.environ["PATH"]
     
+    # 디버그 키스토어 (기존과 동일)
     debug_keystore = TOOLS_DIR / "debug.keystore"
     if not debug_keystore.exists():
         print("[*] 디버그 키스토어 생성 중...")
